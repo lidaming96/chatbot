@@ -90,7 +90,7 @@ def get_memory_context():
     """
     return memory_context
 
-# 调用LLM API生成回复
+# 调用LLM API直接生成回复
 def call_llm_api(messages, model="deepseek-chat", temperature=0.2):
     client = OpenAI(api_key=deepseek_api_key, base_url="https://api.deepseek.com/v1")
     try:
@@ -104,7 +104,22 @@ def call_llm_api(messages, model="deepseek-chat", temperature=0.2):
         st.error(f"API调用失败: {str(e)}")
         return "抱歉，暂时无法处理您的请求，请稍后再试。"
 
-
+# 调用LLM API流式回复
+def stream_response(messages, model="deepseek-chat", temperature=0.2):
+    client = OpenAI(api_key=deepseek_api_key, base_url="https://api.deepseek.com/v1")
+    try:
+        stream = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            stream=True
+        )
+        for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+    except Exception as e:
+        st.error(f"API 请求错误: {str(e)}")
+        yield "抱歉，无法连接到AI服务。请检查网络或API配置。"
 
 # 使用LLM总结对话
 def summarize_conversation(conversation_history):
@@ -283,13 +298,14 @@ def main():
 
         # 添加助手临时消息占位
         with st.chat_message("assistant"):
-            placeholder = st.empty()  # 创建临时占位符
-            placeholder.markdown("思考中...")
+            #placeholder = st.empty()  # 创建临时占位符
+            #placeholder.markdown("思考中...")
             # 生成回复
-        with st.spinner("思考中..."):
-            response = call_llm_api(llm_input)
+            with st.spinner("思考中..."):
+                response = stream_response(llm_input)
+                st.write_stream(response)
         # 更新助手消息占位符
-        placeholder.markdown(response)
+        #placeholder.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
 
         # 更新记忆
