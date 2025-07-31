@@ -1,0 +1,43 @@
+{
+  "summary": "【摘要】用户让助手用三句话形容算法工程师，助手未给出具体回答。\n【摘要】用户询问惠州双月湾的美食推荐，助手未提供具体店铺信息。\n【摘要】用户询问1996年8月出生的趣事，助手尝试提供信息但未成功。\n【摘要】用户询问从上海搬到深圳的快速适应方法，助手未给出具体建议。\n【摘要】用户询问如何形容中国科学技术大学，助手尝试生成回答但未显示具体内容。",
+  "events": [
+    "用户周末去惠州双月湾",
+    "用户从上海搬到深圳"
+  ],
+  "profile": [
+    "用户是一名算法工程师",
+    "用户出生于1996年",
+    "用户生日8月份",
+    "用户毕业于中科大"
+  ],
+  "facts": [
+    "{\"events\":[],\"profile\":[\"用户是一名算法工程师\"]}",
+    "{\"events\":[\"用户周末去惠州双月湾\"],\"profile\":[]}",
+    "{\"events\":[],\"profile\":[\"用户出生于1996年\",\"用户生日8月份\"]}",
+    "{\"events\":[\"用户从上海搬到深圳\"],\"profile\":[]}",
+    "{\"events\":[],\"profile\":[\"用户毕业于中科大\"]}"
+  ],
+  "conversation_history": [
+    {
+      "timestamp": "2025-07-31T14:02:23.934146",
+      "messages": "user: 我是一名算法工程师，请用三句话形容我\nassistant: <generator object stream_response at 0x0000016516A487B0>"
+    },
+    {
+      "timestamp": "2025-07-31T14:02:50.819717",
+      "messages": "user: 我周末要去惠州双月湾玩，请推荐两家好吃的店\nassistant: <generator object stream_response at 0x0000016535E9D030>"
+    },
+    {
+      "timestamp": "2025-07-31T14:03:36.851684",
+      "messages": "user: 我出生于1996年8月份，当时有什么趣事吗\nassistant: <generator object stream_response at 0x0000016516A48AE0>"
+    },
+    {
+      "timestamp": "2025-07-31T14:04:11.656062",
+      "messages": "user: 我刚从上海搬到深圳，给我推荐一些快速适应的方法\nassistant: <generator object stream_response at 0x0000016518752020>"
+    },
+    {
+      "timestamp": "2025-07-31T14:04:33.801527",
+      "messages": "user: 我毕业于中国科学技术大学，请用一句话形容这所大学\nassistant: <generator object stream_response at 0x0000016535E9D140>"
+    }
+  ],
+  "last_updated": "2025-07-31T14:04:45.198075"
+}
