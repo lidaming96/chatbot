@@ -404,9 +404,15 @@ def main():
 
         with st.chat_message("assistant"):
             with st.spinner("思考中..."):
+                # 创建容器收集响应
+                response_container = st.empty()
+                full_response = ""
                 response = stream_response(llm_input)
-                st.write_stream(response)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+                for chunk in response:
+                    full_response += chunk
+                    response_container.markdown(full_response)
+                response_container.markdown(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
 
         # 更新记忆
         recent_conversation = "\n".join(
