@@ -4,6 +4,11 @@
       "username": "liming",
       "password_hash": "8039c8d01e88e7587097e7fc45c33192489671f2af8b8d43f9701135b77b7a4c",
       "created_at": "2025-07-31T11:57:19.356000"
+    },
+    {
+      "username": "\u5f20\u4e09",
+      "password_hash": "5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5",
+      "created_at": "2025-07-31T15:25:11.149319"
     }
   ]
 }
