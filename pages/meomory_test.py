@@ -2,6 +2,7 @@ from openai import OpenAI
 import streamlit as st
 import os
 import json
+import hashlib
 from datetime import datetime
 import time
 from langchain_community.llms.ollama import Ollama
@@ -41,21 +42,77 @@ deepseek_api_key='sk-d3c9e1f7573242c0b1ad62e2f309310d'
 
 # 初始化存储系统
 MEMORY_DIR = "chat_memories"
+USER_DB_FILE = os.path.join(MEMORY_DIR, "users.json")  # 用户数据库文件
 os.makedirs(MEMORY_DIR, exist_ok=True)
 
-# 设定用户ID，后续可迭代为用户认证形式
-USER_ID = "default_user"
 
-# 获取用户记忆文件路径
-def get_memory_file():
-    return os.path.join(MEMORY_DIR, f"{USER_ID}_memory.json")
+# 创建或加载用户数据库
+def init_user_db():
+    if not os.path.exists(USER_DB_FILE):
+        with open(USER_DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump({"users": []}, f, indent=2)
+    try:
+        with open(USER_DB_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return {"users": []}
+
+# 安全密码哈希
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# 用户注册
+def register_user(username, password):
+    user_db = init_user_db()
+    for user in user_db["users"]:
+        if user["username"] == username:
+            return False, "用户名已被使用"
+    new_user = {
+        "username": username,
+        "password_hash": hash_password(password),
+        "created_at": datetime.now().isoformat()
+    }
+    user_db["users"].append(new_user)
+    with open(USER_DB_FILE, 'w', encoding='utf-8') as f:
+        json.dump(user_db, f, indent=2)
+    # 为用户创建记忆文件
+    user_memories = {
+        "summary": "这是一位新用户，尚未形成长期记忆。",
+        "events": [],
+        "profile": [],
+        "facts": [],
+        "conversation_history": [],
+        "last_updated": datetime.now().isoformat()
+    }
+    memory_file = get_memory_file(username)
+    with open(memory_file, 'w', encoding='utf-8') as f:
+        json.dump(user_memories, f, ensure_ascii=False, indent=2)
+    return True, "注册成功"
+
+# 用户登录
+def login_user(username, password):
+    user_db = init_user_db()
+
+    for user in user_db["users"]:
+        if user["username"] == username:
+            if user["password_hash"] == hash_password(password):
+                return True, "登录成功"
+    return False, "用户名或密码错误"
+
+# 获取用户记忆文件路径 - 现在基于用户名
+def get_memory_file(username):
+    return os.path.join(MEMORY_DIR, f"{username}_memory.json")
+
 
 # 加载历史记忆
-def load_memories():
-    memory_file = get_memory_file()
+def load_memories(username):
+    memory_file = get_memory_file(username)
     if os.path.exists(memory_file):
-        with open(memory_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(memory_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
     return {
         "summary": "",
         #"conversations": []
@@ -67,14 +124,15 @@ def load_memories():
     }
 
 # 保存记忆到文件
-def save_memories(memories):
-    with open(get_memory_file(), 'w', encoding='utf-8') as f:
+def save_memories(memories, username):
+    memory_file = get_memory_file(username)
+    with open(memory_file, 'w', encoding='utf-8') as f:
         json.dump(memories, f, ensure_ascii=False, indent=2)
     st.session_state.current_memory = memories.copy()
 
 # 获取当前记忆上下文
-def get_memory_context():
-    memories = load_memories()
+def get_memory_context(username):
+    memories = load_memories(username)
 
     events = "\n- ".join(memories["events"][-5:]) if memories["events"] else "暂无事件"
     profile = "\n- ".join(memories["profile"][-5:]) if memories["profile"] else "暂无画像"
@@ -205,9 +263,9 @@ def extract_key_facts(conversation, existing_events=[], existing_profile=[]):
     return res
 
 # 更新记忆系统
-def update_memory_system(new_conversation):
+def update_memory_system(new_conversation, username):
     # 1. 加载现有记忆
-    memories = load_memories()
+    memories = load_memories(username)
 
     # 2. 添加到对话历史
     memories["conversation_history"].append({
@@ -243,24 +301,79 @@ def update_memory_system(new_conversation):
     memories["last_updated"] = datetime.now().isoformat()
 
     # 4. 保存更新
-    save_memories(memories)
+    save_memories(memories,st.session_state.current_user)
     return memories
 
 
 
-# 初始化session状态
-if 'current_memory' not in st.session_state:
-    st.session_state.current_memory = load_memories()
-if 'memory_refreshed' not in st.session_state:
-    st.session_state.memory_refreshed = False
+
 
 def main():
     st.set_page_config(page_title="智能助手", page_icon="🤖", layout="wide")
     st.title("🤖 智能助手 - 长期记忆版")
 
-    # 初始化聊天消息
-    if "messages" not in st.session_state:
+    # 初始化session状态
+    if 'current_memory' not in st.session_state:
+        st.session_state.current_memory = None
+    if 'memory_refreshed' not in st.session_state:
+        st.session_state.memory_refreshed = False
+    if 'current_user' not in st.session_state:
+        st.session_state.current_user = None
+    if 'messages' not in st.session_state:
         st.session_state.messages = []
+    if 'show_register' not in st.session_state:
+        st.session_state.show_register = False
+
+    # 用户认证流程
+    if not st.session_state.current_user:
+        st.title("用户认证")
+        if st.session_state.show_register:
+            # 注册表单
+            with st.form("register_form"):
+                st.subheader("新用户注册")
+                new_username = st.text_input("用户名", key="reg_username")
+                new_password = st.text_input("密码", type="password", key="reg_password")
+                confirm_password = st.text_input("确认密码", type="password", key="reg_confirm")
+
+                submitted = st.form_submit_button("注册")
+                if submitted:
+                    if new_password != confirm_password:
+                        st.error("两次输入的密码不一致")
+                    else:
+                        success, message = register_user(new_username, new_password)
+                        if success:
+                            st.session_state.current_user = new_username
+                            st.session_state.show_register = False
+                            st.session_state.messages = []
+                            st.rerun()
+                        else:
+                            st.error(message)
+            if st.button("返回登录"):
+                st.session_state.show_register = False
+                st.rerun()
+        else:
+            # 登录表单
+            with st.form("login_form"):
+                st.subheader("用户登录")
+                username = st.text_input("用户名", key="login_username")
+                password = st.text_input("密码", type="password", key="login_password")
+                submitted = st.form_submit_button("登录")
+                if submitted:
+                    success, message = login_user(username, password)
+                    if success:
+                        st.session_state.current_user = username
+                        st.session_state.messages = []
+                        st.rerun()
+                    else:
+                        st.error(message)
+            if st.button("新用户注册"):
+                st.session_state.show_register = True
+                st.rerun()
+        return
+
+    # 首次加载时需要初始化current_memory
+    if st.session_state.current_memory is None:
+        st.session_state.current_memory = load_memories(st.session_state.current_user)
 
     # 显示历史消息
     for msg in st.session_state.messages:
@@ -273,7 +386,7 @@ def main():
             st.write(prompt)
 
         # 构造上下文（包含记忆和对话历史）
-        memory_context = get_memory_context()
+        memory_context = get_memory_context(st.session_state.current_user)
         conversation_history = "\n".join(
             [f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[-5:]]
         )
@@ -289,23 +402,10 @@ def main():
             {"role": "user", "content": conversation_history}
         ]
 
-        ### 生成回复
-        ##with st.chat_message("assistant"):
-        ##    with st.spinner("思考中..."):
-        ##        response = call_llm_api(llm_input)
-        ##        #st.write(response)
-        ##    st.session_state.messages.append({"role": "assistant", "content": response})
-
-        # 添加助手临时消息占位
         with st.chat_message("assistant"):
-            #placeholder = st.empty()  # 创建临时占位符
-            #placeholder.markdown("思考中...")
-            # 生成回复
             with st.spinner("思考中..."):
                 response = stream_response(llm_input)
                 st.write_stream(response)
-        # 更新助手消息占位符
-        #placeholder.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
 
         # 更新记忆
@@ -313,28 +413,41 @@ def main():
                 [f"{msg['role']}: {msg['content']}"
                  for msg in st.session_state.messages[-2:]]  # 包括用户和助手的1轮对话
         )
-        updated_memory = update_memory_system(recent_conversation)
+        updated_memory = update_memory_system(recent_conversation, st.session_state.current_user)
         st.session_state.current_memory = updated_memory
+
+    # 侧边栏 - 登出按钮
+    with st.sidebar:
+        st.header("👤 用户管理")
+        st.write(f"当前用户: **{st.session_state.current_user}**")
+        if st.button("登出"):
+            st.session_state.current_user = None
+            st.session_state.messages = []
+            st.session_state.current_memory = None
+            st.rerun()
 
     # 侧边栏 - 记忆管理
     with st.sidebar:
         st.header("🧠 记忆系统")
 
-        # 显示记忆最后更新时间
-        last_updated = datetime.fromisoformat(
-            st.session_state.current_memory.get("last_updated", datetime.now().isoformat())
-        )
-        time_diff = (datetime.now() - last_updated).seconds
-        update_text = f"最后更新: {last_updated.strftime('%H:%M:%S')} "
-
-        if st.session_state.memory_refreshed:
-            update_text += "🟢 (刚刚更新)"
-        elif time_diff < 30:
-            update_text += "🟢"
-        elif time_diff < 120:
-            update_text += "🟡"
+        if st.session_state.current_memory is None or not st.session_state.current_memory.get("last_updated"):
+            last_updated = datetime.now()
+            update_text = "记忆尚未初始化"
         else:
-            update_text += "🔴"
+            last_updated = datetime.fromisoformat(
+                st.session_state.current_memory.get("last_updated", datetime.now().isoformat())
+            )
+            time_diff = (datetime.now() - last_updated).seconds
+
+            update_text = f"最后更新: {last_updated.strftime('%H:%M:%S')} "
+            if st.session_state.memory_refreshed:
+                update_text += "🟢 (刚刚更新)"
+            elif time_diff < 30:
+                update_text += "🟢"
+            elif time_diff < 120:
+                update_text += "🟡"
+            else:
+                update_text += "🔴"
 
         st.caption(update_text)
 
@@ -383,19 +496,19 @@ def main():
                 "conversation_history": [],
                 "last_updated": datetime.now().isoformat()
             }
-            save_memories(initial_memory)
+            save_memories(initial_memory, st.session_state.current_user)
             st.session_state.current_memory = initial_memory
             st.session_state.messages = []
             st.success("记忆已重置!")
 
-        if st.button("导出记忆", key="export_memory"):
-            memory_data = st.session_state.current_memory
-            st.download_button(
-                label="下载记忆数据",
-                data=json.dumps(memory_data, ensure_ascii=False, indent=2),
-                file_name=f"memory_{USER_ID}_{datetime.now().strftime('%Y%m%d%H%M')}.json",
-                mime="application/json"
-            )
+        memory_data = st.session_state.current_memory
+        st.download_button(
+            label="导出记忆",
+            data=json.dumps(memory_data, ensure_ascii=False, indent=2),
+            file_name=f"memory_{st.session_state.current_user}_{datetime.now().strftime('%Y%m%d%H%M')}.json",
+            mime="application/json",
+            key='export_memory'
+        )
 
 if __name__ == "__main__":
     main()
