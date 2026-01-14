@@ -15,6 +15,8 @@ from langchain.chains import ConversationalRetrievalChain
 import PyPDF2
 import io
 import re
+import base64
+from PIL import Image
 
 # 移除新内容中与已有内容重复的条目(支持模糊匹配)
 def deduplicate_items(existing_items, new_items):
@@ -41,22 +43,14 @@ def deduplicate_items(existing_items, new_items):
     return existing_items + unique_new_items
 
 
-# 从Streamlit secrets获取API密钥
-def get_api_key():
-    try:
-        api_key = st.secrets["DEEPSEEK_API_KEY"]
-        return api_key
-    except (KeyError, FileNotFoundError):
-        st.error("❌ 未找到API密钥！请在 .streamlit/secrets.toml 中配置 DEEPSEEK_API_KEY")
-        st.info("""
-        配置方法：
-        在 .streamlit/secrets.toml 文件中添加：
-        DEEPSEEK_API_KEY = "your_api_key_here"
-        """)
-        st.stop()
-
-# 获取API密钥
-deepseek_api_key = get_api_key()
+# 从client模块导入API调用函数
+from client import (
+    call_llm_api,
+    stream_response,
+    analyze_image_with_vision,
+    get_ds_client,
+    get_db_client
+)
 
 # 初始化存储系统
 MEMORY_DIR = "chat_memories"
@@ -136,6 +130,7 @@ def load_memories(username):
         "summary": "这是一位新用户，尚未形成长期记忆。",
         "events": [],
         "profile": [],
+        "structured_profile": {},  # 结构化人物画像
         "facts": [],
         "conversation_history": [],
         "documents": [],  # 新增：文档记忆
@@ -173,36 +168,7 @@ def get_memory_context(username):
     """
     return memory_context
 
-# 调用LLM API直接生成回复
-def call_llm_api(messages, model="deepseek-chat", temperature=0.2):
-    client = OpenAI(api_key=deepseek_api_key, base_url="https://api.deepseek.com/v1")
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.error(f"API调用失败: {str(e)}")
-        return "抱歉，暂时无法处理您的请求，请稍后再试。"
-
-# 调用LLM API流式回复
-def stream_response(messages, model="deepseek-chat", temperature=0.2):
-    client = OpenAI(api_key=deepseek_api_key, base_url="https://api.deepseek.com/v1")
-    try:
-        stream = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            stream=True
-        )
-        for chunk in stream:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
-    except Exception as e:
-        st.error(f"API 请求错误: {str(e)}")
-        yield "抱歉，无法连接到AI服务。请检查网络或API配置。"
+# API调用函数已移至client.py模块
 
 # 使用LLM总结对话
 def summarize_conversation(conversation_history):
@@ -223,69 +189,176 @@ def summarize_conversation(conversation_history):
     response = call_llm_api(
         messages=[{"role": "user", "content": prompt}],
         model="deepseek-chat",  
-        temperature=0.3
+        temperature=0.3,
+        provider="deepseek"
     )
     return "【摘要】"+response
 
 # 使用LLM提取对话中的关键事实和画像
 def extract_key_facts(conversation, existing_events=[], existing_profile=[]):
-
-    tmp_prompt = f"""
-    请严格按照以下规则从对话中提取信息，输出必须是合法的JSON格式：
-
-    # 输出格式要求
-    {{"events": ["事件描述1", ... ], "profile": ["画像描述1", ... ]}}
+    # 使用统一的 prompt 模板
+    from utils.profile_extraction_prompts import get_profile_extraction_prompt
     
-    # 关键注意事项
-    - 所有事件(events)必须直接来自用户原始陈述，助手提出的任何建议、推荐或计划都不是有效事件
-
-    # 提取规则
-    1. 事件(events): 用户明确提到已经发生或计划发生的具体行动（如事件行程），不包含助手的建议
-    2. 画像(profile): 用户明确提到的人物属性（如姓名、工作、年龄、生日），以及用户偏好/擅长的属性
-    3. 必须直接来源于对话原文，不要推理或补充信息
-    4. 每个条目不超过15字
-    5. 不要创建与已有内容相似的新条目
-    6. 避免重复描述相同的事实
-    7. 已有事件: {", ".join(existing_events[-5:])}
-    8. 已有画像: {", ".join(existing_profile[-5:])}
+    prompt = get_profile_extraction_prompt(
+        content_type="conversation",
+        content=conversation,
+        existing_events=existing_events,
+        existing_profile=existing_profile,
+        include_summary=False
+    )
+    
+    # 添加对话提取的特定示例
+    conversation_examples = """
     
     示例1：
     输入：
     user: 我刚刚换了房子，有什么建议吗\nassistant: 找个周末把卫生死角打扫干净
-    输出：{{"events":["用户刚换了房子"],"profile":[]}}
+    输出：{{"events":["用户刚换了房子"],"profile":[],"structured_profile":{{}}}}
     
     示例2：
     输入：
     user: 住在深圳，周末能去哪些地方玩？\nassistant: 可以去惠州、香港等地，高铁时间不超过一个小时。
-    输出：{{"events":[],"profile":["用户家住深圳"]}}
+    输出：{{"events":[],"profile":["用户家住深圳"],"structured_profile":{{"basic_info":"居住地深圳"}}}}
     
     示例3：
     输入：
     user: 我是一名算法工程师，请用一句话形容我\nassistant: 你是一位逻辑缜密的数字世界建筑师。
-    输出：{{"events":[],"profile":["用户是一名算法工程师"]}}
+    输出：{{"events":[],"profile":["用户是一名算法工程师"],"structured_profile":{{"work":"算法工程师"}}}}
     
-    
-    输入：
-    {conversation}
-    输出（仅JSON，不要有其他文字）：
     """
+    
+    # 在输出格式示例之前插入对话示例
+    prompt = prompt.replace("输出格式示例：", conversation_examples + "输出格式示例：")
+    
     facts = call_llm_api(
-        messages=[{"role": "user", "content": tmp_prompt}],
+        messages=[{"role": "user", "content": prompt}],
         model="deepseek-chat",
         temperature=0.1,
+        provider="deepseek"
     )
 
     try:
+        # 清理响应文本
+        response = facts.strip()
+        if response.startswith('```json'):
+            response = response[7:].strip()
+        elif response.startswith('```'):
+            response = response[3:].strip()
+        if response.endswith('```'):
+            response = response[:-3].strip()
+        
+        # 尝试找到JSON对象的开始和结束位置
+        json_start = response.find('{')
+        json_end = response.rfind('}')
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            response = response[json_start:json_end+1]
+        
         # 尝试直接解析JSON
-        parsed_data = json.loads(facts)
+        parsed_data = json.loads(response)
         res = {
             "events": parsed_data.get("events", []),
             "profile": parsed_data.get("profile", []),
+            "structured_profile": parsed_data.get("structured_profile", {}),
             "facts": [facts]
         }
     except json.JSONDecodeError:
-        res = {"events": [], "profile": [], "facts": []}
+        res = {"events": [], "profile": [], "structured_profile": {}, "facts": []}
     return res
+
+# 图片处理函数
+def process_uploaded_image(uploaded_file):
+    """处理上传的图片，转换为base64编码"""
+    try:
+        # 读取图片文件
+        image_bytes = uploaded_file.getvalue()
+        
+        # 转换为base64编码
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # 获取图片格式
+        image_format = uploaded_file.type.split('/')[-1]  # 例如: 'png', 'jpeg'
+        
+        # 构建data URL
+        data_url = f"data:image/{image_format};base64,{image_base64}"
+        
+        return data_url, None
+    except Exception as e:
+        return None, f"图片处理失败: {str(e)}"
+
+# analyze_image_with_vision 函数已移至 client.py 模块
+
+# 将图片信息添加到用户记忆中
+def update_image_memory(image_info, username, filename):
+    """将图片信息添加到用户记忆中"""
+    memories = load_memories(username)
+    
+    # 添加图片记录
+    image_timestamp = datetime.now().isoformat()
+    image_record = {
+        "timestamp": image_timestamp,
+        "filename": filename,
+        "title": image_info.get("title", ""),
+        "description": image_info.get("description", ""),
+        "events": image_info.get("events", []),
+        "profile": image_info.get("profile", []),
+        "structured_profile": image_info.get("structured_profile", {}),  # 添加结构化画像
+        "type": "image"
+    }
+    
+    # 将图片记录添加到documents列表（统一管理）
+    if "documents" not in memories:
+        memories["documents"] = []
+    memories["documents"].append(image_record)
+    
+    # 限制记录数量
+    if len(memories["documents"]) > 10:
+        memories["documents"] = memories["documents"][-10:]
+    
+    # 合并提取的事件和画像到主记忆（使用去重函数）
+    new_events = image_info.get("events", [])
+    new_profile = image_info.get("profile", [])
+    new_structured_profile = image_info.get("structured_profile", {})
+    
+    if new_events:
+        memories["events"] = deduplicate_items(memories["events"], new_events)
+    if new_profile:
+        memories["profile"] = deduplicate_items(memories["profile"], new_profile)
+    
+    # 合并结构化画像信息（传递时间戳用于历史记录）
+    if new_structured_profile:
+        existing_structured_profile = memories.get("structured_profile", {})
+        memories["structured_profile"] = merge_structured_profile(
+            existing_structured_profile, 
+            new_structured_profile, 
+            timestamp=image_timestamp,
+            memories=memories  # 传入memories以整合所有历史画像信息
+        )
+    
+    # 更新记忆摘要
+    if memories["summary"] == "这是一位新用户，尚未形成长期记忆。":
+        memories["summary"] = f"用户上传了图片：{image_info.get('title', '')}"
+    else:
+        existing_summary = memories["summary"]
+        new_title = image_info.get('title', '')
+        
+        # 检查是否已经存在相同的图片记忆
+        if "【图片记忆】" in existing_summary:
+            existing_image_memories = []
+            lines = existing_summary.split('\n')
+            for line in lines:
+                if line.startswith('【图片记忆】'):
+                    existing_image_memories.append(line.replace('【图片记忆】', '').strip())
+            
+            if new_title not in existing_image_memories:
+                memories["summary"] += f"\n【图片记忆】{new_title}"
+        else:
+            memories["summary"] += f"\n【图片记忆】{new_title}"
+    
+    memories["last_updated"] = datetime.now().isoformat()
+    
+    # 保存更新
+    save_memories(memories, username)
+    return memories
 
 # 文档处理函数
 def process_uploaded_document(uploaded_file):
@@ -311,51 +384,113 @@ def process_uploaded_document(uploaded_file):
 
 # 从文档中提取关键事实和用户画像信息
 def extract_document_facts(document_text, existing_events=[], existing_profile=[]):
-    prompt = f"""
-    请分析以下文档内容，提取关键信息并按照指定JSON格式输出：
-
-    文档内容：
-    {document_text[:2000]}
-
-    请提取以下信息：
-    1. events: 文档中提到的具体事件、行动、经历、计划等（数组格式）
-    2. profile: 文档中提到的人物属性、特征、技能、爱好等（数组格式）  
-    3. summary: 用一句话总结文档的主要内容
-
-    输出格式示例：
-    {{"events": ["事件1", "事件2"], "profile": ["属性1", "属性2"], "summary": "摘要内容"}}
-
-    请直接输出JSON格式，不要有其他文字：
-    """
+    # 使用统一的 prompt 模板
+    from utils.profile_extraction_prompts import get_profile_extraction_prompt
+    
+    prompt = get_profile_extraction_prompt(
+        content_type="document",
+        content=document_text,
+        existing_events=existing_events,
+        existing_profile=existing_profile,
+        include_summary=True
+    )
     
     try:
-        response = call_llm_api(
+        raw_response = call_llm_api(
             messages=[{"role": "user", "content": prompt}],
             model="deepseek-chat",
             temperature=0.1,
+            provider="deepseek"
         )
         
+        # 保存原始响应用于调试
+        original_response = raw_response
+        
         # 清理响应文本
-        response = response.strip()
-        if response.startswith('```'):
-            response = response.split('\n', 1)[1] if '\n' in response else response[3:]
+        response = raw_response.strip()
+        
+        # 移除代码块标记
+        if response.startswith('```json'):
+            response = response[7:].strip()
+        elif response.startswith('```'):
+            response = response[3:].strip()
+        
         if response.endswith('```'):
-            response = response[:-3]
+            response = response[:-3].strip()
+        
+        # 尝试找到JSON对象的开始和结束位置
+        # 处理可能的前后文本
+        json_start = response.find('{')
+        json_end = response.rfind('}')
+        
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            response = response[json_start:json_end+1]
+        
         response = response.strip()
         
         # 尝试解析JSON
-        parsed_data = json.loads(response)
+        try:
+            parsed_data = json.loads(response)
+        except json.JSONDecodeError as json_err:
+            st.error(f"JSON解析错误: {str(json_err)}")
+            st.write(f"尝试解析的文本: {response[:500]}")
+            # 尝试修复常见的JSON问题
+            # 移除可能的注释
+            import re
+            response = re.sub(r'//.*?$', '', response, flags=re.MULTILINE)
+            response = re.sub(r'/\*.*?\*/', '', response, flags=re.DOTALL)
+            try:
+                parsed_data = json.loads(response)
+            except:
+                raise json_err
+        
+        # 获取结构化画像，确保是字典格式
+        structured_profile = parsed_data.get("structured_profile", {})
+        if structured_profile is None:
+            structured_profile = {}
+        elif not isinstance(structured_profile, dict):
+            st.warning(f"⚠️ structured_profile 格式不正确，期望字典，实际类型: {type(structured_profile)}")
+            structured_profile = {}
         
         result = {
             "events": parsed_data.get("events", []),
             "profile": parsed_data.get("profile", []),
+            "structured_profile": structured_profile,
             "summary": parsed_data.get("summary", "文档内容已记录"),
-            "document_text": document_text[:500]
+            "document_text": document_text[:500],
+            "raw_response": original_response,  # 保存原始响应用于调试
+            "cleaned_response": response,  # 保存清理后的响应
+            "parsed_data": parsed_data  # 保存解析后的完整数据用于调试
         }
         
         # 调试信息
         st.write(f"API响应: {response[:300]}...")
         st.write(f"解析结果: 事件{len(result['events'])}个, 画像{len(result['profile'])}个")
+        
+        # 检查结构化画像
+        if structured_profile:
+            st.success(f"✅ 成功提取结构化画像，包含字段: {list(structured_profile.keys())}")
+            # 显示结构化画像的简要信息
+            if structured_profile.get("basic_info"):
+                st.write(f"  - 基础信息: {structured_profile['basic_info'][:50]}...")
+            if structured_profile.get("work"):
+                st.write(f"  - 工作: {structured_profile['work'][:50]}...")
+            if structured_profile.get("education"):
+                st.write(f"  - 教育: {structured_profile['education'][:50]}...")
+        else:
+            st.warning("⚠️ 未提取到结构化画像信息，可能原因：1) 文档中没有相关信息 2) LLM未正确解析")
+            # 显示原始响应中的 structured_profile 部分（如果有）
+            if "structured_profile" in response:
+                st.write("原始响应中包含 structured_profile 字段，但可能格式不正确")
+                # 尝试从原始响应中提取 structured_profile
+                try:
+                    import re
+                    # 尝试找到 structured_profile 部分
+                    match = re.search(r'"structured_profile"\s*:\s*(\{[^}]*\})', response, re.DOTALL)
+                    if match:
+                        st.write(f"找到 structured_profile 片段: {match.group(1)[:200]}...")
+                except:
+                    pass
         
         return result
         
@@ -379,6 +514,7 @@ def extract_document_facts(document_text, existing_events=[], existing_profile=[
         return {
             "events": manual_events,
             "profile": manual_profile,
+            "structured_profile": {},  # 手动提取时无法生成结构化画像
             "summary": "文档内容已记录（手动提取）",
             "document_text": document_text[:500]
         }
@@ -387,22 +523,544 @@ def extract_document_facts(document_text, existing_events=[], existing_profile=[
         return {
             "events": [],
             "profile": [],
+            "structured_profile": {},  # API调用失败时无法生成结构化画像
             "summary": "文档内容已记录（处理失败）",
             "document_text": document_text[:500]
         }
+
+# 格式化人物画像展示
+def format_profile_display(structured_profile):
+    """
+    将结构化的人物画像信息格式化为用户要求的格式，包含历史记录
+    
+    Args:
+        structured_profile: 结构化的人物画像字典
+    
+    Returns:
+        格式化后的字符串
+    """
+    if not structured_profile or not isinstance(structured_profile, dict):
+        return None
+    
+    lines = []
+    
+    # 1. 基础信息（显示最新信息，如果有历史记录则显示）
+    if structured_profile.get("basic_info"):
+        basic_info_line = f"1、基础信息：{structured_profile['basic_info']}"
+        
+        # 显示历史记录（排除当前最新的，因为已经显示在上面）
+        basic_history = structured_profile.get("basic_info_history", [])
+        if basic_history and len(basic_history) > 1:  # 有历史记录且不止一条
+            history_items = []
+            # 显示除最后一条（最新）之外的所有历史记录，最多显示最近3条
+            for hist in basic_history[-4:-1] if len(basic_history) > 1 else []:
+                timestamp = hist.get("timestamp", "")
+                info = hist.get("info", "")
+                if info != structured_profile['basic_info']:  # 排除与当前信息相同的
+                    if timestamp:
+                        try:
+                            # 格式化时间戳
+                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            time_str = dt.strftime("%Y-%m-%d")
+                        except:
+                            time_str = timestamp[:10] if len(timestamp) >= 10 else timestamp
+                        history_items.append(f"{info}（{time_str}）")
+                    else:
+                        history_items.append(info)
+            if history_items:
+                basic_info_line += f"\n   - 历史：{'；'.join(history_items)}"
+        
+        lines.append(basic_info_line)
+    
+    # 2. 工作
+    if structured_profile.get("work"):
+        lines.append(f"2、工作：{structured_profile['work']}")
+    
+    # 3. 教育
+    if structured_profile.get("education"):
+        lines.append(f"3、教育：{structured_profile['education']}")
+    
+    # 4. 健康（显示最新信息，如果有历史记录则显示）
+    if structured_profile.get("health"):
+        health_line = f"4、健康：{structured_profile['health']}"
+        
+        # 显示历史记录（排除当前最新的，因为已经显示在上面）
+        health_history = structured_profile.get("health_history", [])
+        if health_history and len(health_history) > 1:  # 有历史记录且不止一条
+            history_items = []
+            # 显示除最后一条（最新）之外的所有历史记录，最多显示最近3条
+            for hist in health_history[-4:-1] if len(health_history) > 1 else []:
+                timestamp = hist.get("timestamp", "")
+                info = hist.get("info", "")
+                if info != structured_profile['health']:  # 排除与当前信息相同的
+                    if timestamp:
+                        try:
+                            # 格式化时间戳
+                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            time_str = dt.strftime("%Y-%m-%d")
+                        except:
+                            time_str = timestamp[:10] if len(timestamp) >= 10 else timestamp
+                        history_items.append(f"{info}（{time_str}）")
+                    else:
+                        history_items.append(info)
+            if history_items:
+                health_line += f"\n   - 历史：{'；'.join(history_items)}"
+        
+        lines.append(health_line)
+    
+    # 5. 爱好
+    hobbies = structured_profile.get("hobbies", [])
+    if hobbies and isinstance(hobbies, list) and len(hobbies) > 0:
+        hobbies_str = "、".join(hobbies)
+        lines.append(f"5、爱好：{hobbies_str}")
+    
+    # 6. 偏好
+    preferences = structured_profile.get("preferences", [])
+    if preferences and isinstance(preferences, list) and len(preferences) > 0:
+        preferences_str = "、".join(preferences)
+        lines.append(f"6、偏好：{preferences_str}")
+    
+    # 7. 日常习惯
+    customs = structured_profile.get("customs", [])
+    if customs and isinstance(customs, list) and len(customs) > 0:
+        customs_str = "、".join(customs)
+        lines.append(f"7、日常习惯：{customs_str}")
+    
+    # 8. 其他信息
+    other = structured_profile.get("other", [])
+    if other and isinstance(other, list) and len(other) > 0:
+        for idx, item in enumerate(other, start=8):
+            lines.append(f"{idx}、{item}")
+    
+    return "\n".join(lines) if lines else None
+
+# 辅助函数：从基础信息中提取年龄
+def extract_age_from_basic_info(basic_info):
+    """从基础信息字符串中提取年龄"""
+    if not basic_info:
+        return None
+    import re
+    # 匹配"XX岁"格式
+    match = re.search(r'(\d+)岁', basic_info)
+    if match:
+        return int(match.group(1))
+    return None
+
+# 辅助函数：合并基础信息（年龄取最新的，保留历史）
+def merge_basic_info(existing_info, new_info, existing_history=None, timestamp=None):
+    """
+    合并基础信息，年龄取最新的（数值更大的），保留历史记录
+    
+    Args:
+        existing_info: 现有的基础信息
+        new_info: 新的基础信息
+        existing_history: 现有的历史记录列表
+        timestamp: 新信息的时间戳
+    
+    Returns:
+        (合并后的基础信息, 更新后的历史记录列表)
+    """
+    if not new_info:
+        return existing_info, existing_history or []
+    
+    if not existing_info:
+        # 第一次添加，创建历史记录
+        history = existing_history or []
+        if timestamp:
+            history.append({"info": new_info, "timestamp": timestamp})
+        return new_info, history
+    
+    # 提取年龄进行比较
+    existing_age = extract_age_from_basic_info(existing_info)
+    new_age = extract_age_from_basic_info(new_info)
+    
+    history = existing_history or []
+    
+    # 如果新信息有年龄且比现有年龄大，或者现有信息没有年龄，则更新
+    should_update = False
+    if new_age is not None:
+        if existing_age is None or new_age > existing_age:
+            should_update = True
+    elif existing_age is None:
+        # 如果都没有年龄，但新信息存在，也可以更新（保留更详细的信息）
+        if len(new_info) > len(existing_info):
+            should_update = True
+    
+    if should_update:
+        # 保存旧信息到历史记录（使用旧信息的时间戳，如果没有则使用当前时间戳）
+        if existing_history and len(existing_history) > 0:
+            # 如果历史记录中已经有当前信息，使用它的时间戳
+            last_hist = existing_history[-1]
+            if last_hist.get("info") == existing_info:
+                old_timestamp = last_hist.get("timestamp", timestamp)
+            else:
+                old_timestamp = timestamp
+        else:
+            old_timestamp = timestamp
+        
+        if old_timestamp:
+            history.append({"info": existing_info, "timestamp": old_timestamp})
+        
+        # 添加新信息到历史记录
+        if timestamp:
+            history.append({"info": new_info, "timestamp": timestamp})
+        
+        return new_info, history
+    else:
+        # 不更新主信息，但将新信息记录到历史（如果不同）
+        if new_info != existing_info and timestamp:
+            history.append({"info": new_info, "timestamp": timestamp})
+        return existing_info, history
+
+# 辅助函数：合并健康信息（取最新，保留历史）
+def merge_health_info(existing_info, new_info, existing_history=None, timestamp=None):
+    """
+    合并健康信息，取最新的，保留历史记录
+    
+    Args:
+        existing_info: 现有的健康信息
+        new_info: 新的健康信息
+        existing_history: 现有的历史记录列表
+        timestamp: 新信息的时间戳
+    
+    Returns:
+        (合并后的健康信息, 更新后的历史记录列表)
+    """
+    if not new_info:
+        return existing_info, existing_history or []
+    
+    if not existing_info:
+        # 第一次添加
+        history = existing_history or []
+        if timestamp:
+            history.append({"info": new_info, "timestamp": timestamp})
+        return new_info, history
+    
+    # 健康信息总是取最新的
+    history = existing_history or []
+    
+    # 保存旧信息到历史记录（使用旧信息的时间戳，如果没有则使用当前时间戳）
+    if existing_history and len(existing_history) > 0:
+        # 如果历史记录中已经有当前信息，使用它的时间戳
+        last_hist = existing_history[-1]
+        if last_hist.get("info") == existing_info:
+            old_timestamp = last_hist.get("timestamp", timestamp)
+        else:
+            old_timestamp = timestamp
+    else:
+        old_timestamp = timestamp
+    
+    if old_timestamp:
+        history.append({"info": existing_info, "timestamp": old_timestamp})
+    
+    # 添加新信息到历史记录
+    if timestamp:
+        history.append({"info": new_info, "timestamp": timestamp})
+    
+    return new_info, history
+
+# 辅助函数：合并工作信息（支持多个工作经历）
+def merge_work_info(existing_info, new_info):
+    """合并工作信息，如果不同则合并为多个工作经历"""
+    if not existing_info:
+        return new_info
+    if not new_info:
+        return existing_info
+    if existing_info == new_info:
+        return existing_info
+    # 如果不同，合并为多个工作经历
+    return f"{existing_info}；{new_info}"
+
+# 辅助函数：合并教育信息（支持多段教育经历）
+def merge_education_info(existing_info, new_info):
+    """合并教育信息，支持多段教育经历"""
+    if not existing_info:
+        return new_info
+    if not new_info:
+        return existing_info
+    if existing_info == new_info:
+        return existing_info
+    # 合并多段教育经历
+    return f"{existing_info}；{new_info}"
+
+# 使用LLM重新生成综合的结构化画像
+def regenerate_structured_profile(merged_profile, memories=None):
+    """
+    使用LLM综合所有信息，重新生成一份完整的结构化画像信息
+    
+    Args:
+        merged_profile: 合并后的结构化画像字典
+        memories: 完整的记忆对象，用于获取所有历史画像信息（可选）
+    
+    Returns:
+        重新生成的结构化画像字典
+    """
+    if not merged_profile or not isinstance(merged_profile, dict):
+        return merged_profile or {}
+    
+    # 收集所有历史画像信息
+    all_profile_data = []
+    
+    # 1. 主记忆中的结构化画像（最新合并后的）
+    if merged_profile:
+        all_profile_data.append({
+            "source": "主记忆（最新合并）",
+            "profile": merged_profile,
+            "timestamp": merged_profile.get("_last_updated") or datetime.now().isoformat()
+        })
+    
+    # 2. 从所有文档中提取结构化画像
+    if memories and isinstance(memories, dict):
+        documents = memories.get("documents", [])
+        for doc in documents:
+            doc_profile = doc.get("structured_profile", {})
+            if doc_profile and isinstance(doc_profile, dict):
+                # 只收集有实际内容的画像
+                has_content = any([
+                    doc_profile.get("basic_info"),
+                    doc_profile.get("work"),
+                    doc_profile.get("education"),
+                    doc_profile.get("health"),
+                    doc_profile.get("hobbies"),
+                    doc_profile.get("preferences"),
+                    doc_profile.get("customs"),
+                    doc_profile.get("other")
+                ])
+                if has_content:
+                    all_profile_data.append({
+                        "source": f"文档：{doc.get('filename', '未知文件')}",
+                        "profile": doc_profile,
+                        "timestamp": doc.get("timestamp", "")
+                    })
+    
+    # 如果没有收集到任何画像信息，返回原始合并结果
+    if not all_profile_data:
+        return merged_profile
+    
+    # 按时间戳排序，最新的在前
+    all_profile_data.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    
+    # 构建综合信息描述
+    profile_summary = []
+    profile_summary.append("=== 所有历史画像信息汇总 ===\n")
+    
+    # 按来源分组展示所有画像信息
+    for idx, data in enumerate(all_profile_data, 1):
+        source = data["source"]
+        profile = data["profile"]
+        timestamp = data.get("timestamp", "")
+        
+        # 格式化时间戳
+        time_str = ""
+        if timestamp:
+            try:
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                time_str = dt.strftime("%Y-%m-%d %H:%M")
+            except:
+                time_str = timestamp[:16] if len(timestamp) >= 16 else timestamp
+        
+        profile_summary.append(f"\n【来源 {idx}】{source}" + (f"（{time_str}）" if time_str else ""))
+        
+        # 基础信息
+        if profile.get("basic_info"):
+            profile_summary.append(f"  基础信息：{profile['basic_info']}")
+        
+        # 工作信息
+        if profile.get("work"):
+            profile_summary.append(f"  工作：{profile['work']}")
+        
+        # 教育信息
+        if profile.get("education"):
+            profile_summary.append(f"  教育：{profile['education']}")
+        
+        # 健康信息
+        if profile.get("health"):
+            profile_summary.append(f"  健康：{profile['health']}")
+        
+        # 数组字段
+        for key, label in [("hobbies", "爱好"), ("preferences", "偏好"), ("customs", "日常习惯"), ("other", "其他")]:
+            items = profile.get(key, [])
+            if items and isinstance(items, list) and len(items) > 0:
+                profile_summary.append(f"  {label}：{'、'.join(items)}")
+    
+    # 添加主记忆中的历史记录信息
+    if merged_profile.get("basic_info_history"):
+        history_items = [h.get("info", "") for h in merged_profile["basic_info_history"]]
+        if history_items:
+            profile_summary.append(f"\n基础信息历史记录：{'；'.join(history_items)}")
+    
+    if merged_profile.get("health_history"):
+        history_items = [h.get("info", "") for h in merged_profile["health_history"]]
+        if history_items:
+            profile_summary.append(f"健康信息历史记录：{'；'.join(history_items)}")
+    
+    if len(profile_summary) <= 1:  # 只有标题，没有实际内容
+        return merged_profile
+    
+    # 构建 prompt
+    from utils.profile_extraction_prompts import STRUCTURED_PROFILE_TEMPLATE, STRUCTURED_PROFILE_NOTES
+    
+    prompt = f"""请根据以下所有历史画像信息，重新生成一份完整、准确、结构化的用户画像信息。
+
+{chr(10).join(profile_summary)}
+
+要求：
+1. **综合所有历史画像信息**，包括所有文档、图片和对话中提取的画像信息
+2. 对于基础信息和健康信息，优先使用最新的信息作为主信息，但也要考虑历史信息的完整性
+3. 如果信息有冲突，优先使用时间戳最新的信息
+4. 对于工作、教育、爱好、偏好等字段，需要整合所有来源的信息，避免遗漏
+5. 确保所有字段都按照以下格式输出：
+
+{STRUCTURED_PROFILE_TEMPLATE}
+
+{STRUCTURED_PROFILE_NOTES}
+
+输出格式示例：
+{{
+    "basic_info": "28岁，男，单身，身高175cm",
+    "work": "目前就职于XX公司，任软件工程师",
+    "education": "本科：XX大学计算机科学专业",
+    "health": "体重70kg，BMI 22.9，体脂率15%",
+    "hobbies": ["健身", "游泳"],
+    "preferences": ["甜", "辣", "清淡"],
+    "customs": ["早起", "不抽烟", "不喝酒"],
+    "other": []
+}}
+
+请直接输出JSON格式，不要有其他文字：
+"""
+    
+    try:
+        response = call_llm_api(
+            messages=[{"role": "user", "content": prompt}],
+            model="deepseek-chat",
+            temperature=0.1,
+            provider="deepseek"
+        )
+        
+        # 清理响应文本
+        cleaned_response = response.strip()
+        if cleaned_response.startswith('```json'):
+            cleaned_response = cleaned_response[7:].strip()
+        elif cleaned_response.startswith('```'):
+            cleaned_response = cleaned_response[3:].strip()
+        if cleaned_response.endswith('```'):
+            cleaned_response = cleaned_response[:-3].strip()
+        
+        # 尝试找到JSON对象的开始和结束位置
+        json_start = cleaned_response.find('{')
+        json_end = cleaned_response.rfind('}')
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            cleaned_response = cleaned_response[json_start:json_end+1]
+        
+        # 解析JSON
+        regenerated_profile = json.loads(cleaned_response)
+        
+        # 保留历史记录信息
+        if merged_profile.get("basic_info_history"):
+            regenerated_profile["basic_info_history"] = merged_profile["basic_info_history"]
+        if merged_profile.get("health_history"):
+            regenerated_profile["health_history"] = merged_profile["health_history"]
+        
+        return regenerated_profile
+        
+    except Exception as e:
+        # 如果LLM生成失败，返回原始合并的画像
+        # 使用 print 代替 logger（如果 logger 未定义）
+        print(f"警告：重新生成结构化画像失败: {str(e)}，返回原始合并结果")
+        return merged_profile
+
+# 合并结构化画像信息
+def merge_structured_profile(existing_profile, new_profile, timestamp=None, regenerate=True, memories=None):
+    """
+    智能合并两个结构化画像信息，并可选择使用LLM重新生成综合画像
+    
+    Args:
+        existing_profile: 现有的结构化画像
+        new_profile: 新的结构化画像
+        timestamp: 新信息的时间戳（用于历史记录）
+        regenerate: 是否在合并后使用LLM重新生成综合画像（默认True）
+        memories: 完整的记忆对象，用于获取所有历史画像信息（可选）
+    
+    Returns:
+        合并后的结构化画像（如果regenerate=True，则返回重新生成的画像）
+    """
+    if not existing_profile:
+        # 第一次添加，让merge函数来处理历史记录的创建
+        result = new_profile.copy() if new_profile else {}
+        if timestamp and result:
+            # 处理基础信息的历史记录
+            if result.get("basic_info"):
+                _, history = merge_basic_info("", result["basic_info"], None, timestamp)
+                result["basic_info_history"] = history
+            # 处理健康信息的历史记录
+            if result.get("health"):
+                _, history = merge_health_info("", result["health"], None, timestamp)
+                result["health_history"] = history
+        # 第一次添加时，如果信息足够完整，也可以重新生成
+        if regenerate and result and (result.get("basic_info") or result.get("work") or result.get("health")):
+            return regenerate_structured_profile(result, memories)
+        return result
+    
+    if not new_profile:
+        # 即使没有新信息，如果regenerate=True，也可以重新生成现有画像
+        if regenerate and existing_profile:
+            return regenerate_structured_profile(existing_profile, memories)
+        return existing_profile
+    
+    merged = existing_profile.copy()
+    
+    # 1. 基础信息：年龄取最新的，保留历史
+    if new_profile.get("basic_info"):
+        existing_basic = merged.get("basic_info", "")
+        existing_history = merged.get("basic_info_history", [])
+        merged["basic_info"], merged["basic_info_history"] = merge_basic_info(
+            existing_basic, new_profile["basic_info"], existing_history, timestamp
+        )
+    
+    # 2. 工作：合并多个工作经历
+    if new_profile.get("work"):
+        merged["work"] = merge_work_info(merged.get("work", ""), new_profile["work"])
+    
+    # 3. 教育：合并多段教育经历
+    if new_profile.get("education"):
+        merged["education"] = merge_education_info(merged.get("education", ""), new_profile["education"])
+    
+    # 4. 健康：取最新的，保留历史
+    if new_profile.get("health"):
+        existing_health = merged.get("health", "")
+        existing_history = merged.get("health_history", [])
+        merged["health"], merged["health_history"] = merge_health_info(
+            existing_health, new_profile["health"], existing_history, timestamp
+        )
+    
+    # 5. 数组字段：合并并去重
+    for key in ["hobbies", "preferences", "customs", "other"]:
+        existing_list = merged.get(key, [])
+        new_list = new_profile.get(key, [])
+        if isinstance(existing_list, list) and isinstance(new_list, list):
+            merged[key] = list(set(existing_list + new_list))
+    
+    # 使用LLM重新生成综合画像，传入memories以整合所有历史画像信息
+    if regenerate:
+        return regenerate_structured_profile(merged, memories)
+    
+    return merged
 
 # 将文档信息添加到用户记忆中
 def update_document_memory(document_info, username):
     memories = load_memories(username)
     
     # 添加文档记录
+    document_timestamp = datetime.now().isoformat()
     document_record = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": document_timestamp,
         "filename": document_info.get("filename", "未知文档"),
         "summary": document_info.get("summary", ""),
         "extracted_text": document_info.get("document_text", ""),
         "events": document_info.get("events", []),
-        "profile": document_info.get("profile", [])
+        "profile": document_info.get("profile", []),
+        "structured_profile": document_info.get("structured_profile", {})
     }
     
     memories["documents"].append(document_record)
@@ -414,11 +1072,22 @@ def update_document_memory(document_info, username):
     # 合并提取的事件和画像到主记忆（使用去重函数）
     new_events = document_info.get("events", [])
     new_profile = document_info.get("profile", [])
+    new_structured_profile = document_info.get("structured_profile", {})
     
     if new_events:
         memories["events"] = deduplicate_items(memories["events"], new_events)
     if new_profile:
         memories["profile"] = deduplicate_items(memories["profile"], new_profile)
+    
+    # 合并结构化画像信息（传递时间戳用于历史记录）
+    if new_structured_profile:
+        existing_structured_profile = memories.get("structured_profile", {})
+        memories["structured_profile"] = merge_structured_profile(
+            existing_structured_profile, 
+            new_structured_profile, 
+            timestamp=document_timestamp,
+            memories=memories  # 传入memories以整合所有历史画像信息
+        )
     
     # 更新记忆摘要
     if memories["summary"] == "这是一位新用户，尚未形成长期记忆。":
@@ -520,8 +1189,8 @@ def update_memory_system(new_conversation, username):
 
 
 def main():
-    st.set_page_config(page_title="智能助手", page_icon="🤖", layout="wide")
-    st.title("🤖 Chatbot - 长期记忆版")
+    st.set_page_config(page_title="功能区选择", page_icon="🏠", layout="wide")
+    st.title("🤖 AI助手")
 
     # 初始化session状态
     if 'current_memory' not in st.session_state:
@@ -536,6 +1205,14 @@ def main():
         st.session_state.show_register = False
     if 'processed_file_id' not in st.session_state:
         st.session_state.processed_file_id = None
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = 'home'
+    if 'work_messages' not in st.session_state:
+        st.session_state.work_messages = []
+    if 'fitness_messages' not in st.session_state:
+        st.session_state.fitness_messages = []
+    if 'doctor_messages' not in st.session_state:
+        st.session_state.doctor_messages = []
 
     # 用户认证流程
     if not st.session_state.current_user:
@@ -588,55 +1265,56 @@ def main():
     if st.session_state.current_memory is None:
         st.session_state.current_memory = load_memories(st.session_state.current_user)
 
-    # 显示历史消息
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-
-    if prompt := st.chat_input("请输入您的问题..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.write(prompt)
-
-        # 构造上下文
-        memory_context = get_memory_context(st.session_state.current_user)
-        
-        # 构造短期对话历史（只包含最近1轮对话作为上下文）
-        history_messages = []
-        if len(st.session_state.messages) >= 2:
-            # 只取最近的一轮对话（用户问题+AI回答）
-            history_messages = st.session_state.messages[-2:]
-
-        # 构造LLM输入
-        llm_input = [
-            {"role": "system", "content": f"""
-             你是一位善解人意的助手，拥有长期记忆能力。关于当前对话的用户，你拥有以下记忆信息：
-             {memory_context}
-             
-             请基于以上记忆信息自然地回答用户的问题。如果有相关的对话历史，请自然地延续对话。
-             注意：不要重复之前的回答内容，每次都要给出新的、有价值的回答。
-             """}
-        ]
-        
-        # 将历史消息添加到输入中（如果有的话）
-        if history_messages:
-            llm_input.extend(history_messages)
-        
-        # 添加当前用户消息
-        llm_input.append({"role": "user", "content": prompt})
-
-        with st.chat_message("assistant"):
-            with st.spinner("思考中..."):
-                # 使用Streamlit原生的流式显示，避免重复渲染
-                response = stream_response(llm_input)
-                full_response = st.write_stream(response)
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-        # 更新记忆 - 只使用当前一轮对话
-        recent_conversation = f"user: {prompt}\nassistant: {full_response}"
-        updated_memory = update_memory_system(recent_conversation, st.session_state.current_user)
-        st.session_state.current_memory = updated_memory
+    # 导航菜单
+    st.title("🤖 智能助手")
+    
+    # 创建4个功能模块的导航
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button("🧠 记忆管理", use_container_width=True, type="primary" if st.session_state.current_page == 'memory' else "secondary"):
+            st.session_state.current_page = 'memory'
+            st.rerun()
+    
+    with col2:
+        if st.button("💼 工作秘书", use_container_width=True, type="primary" if st.session_state.current_page == 'work' else "secondary"):
+            st.session_state.current_page = 'work'
+            st.rerun()
+    
+    with col3:
+        if st.button("💪 健身教练", use_container_width=True, type="primary" if st.session_state.current_page == 'fitness' else "secondary"):
+            st.session_state.current_page = 'fitness'
+            st.rerun()
+    
+    with col4:
+        if st.button("🏥 家庭医生", use_container_width=True, type="primary" if st.session_state.current_page == 'doctor' else "secondary"):
+            st.session_state.current_page = 'doctor'
+            st.rerun()
+    
+    st.divider()
+    
+    # 根据当前页面显示不同内容
+    if st.session_state.current_page == 'memory':
+        # 导入记忆管理页面
+        from pages.memory_management import show_memory_management_page
+        show_memory_management_page()
+    elif st.session_state.current_page == 'work':
+        # 工作秘书页面
+        from pages.work_assistant import show_chat_page
+        show_chat_page("工作秘书", "你是一位专业的工作秘书，擅长帮助用户管理工作任务、安排日程、处理邮件等。", st.session_state.work_messages)
+    elif st.session_state.current_page == 'fitness':
+        # 健身教练页面
+        from pages.fitness_coach import show_chat_page
+        show_chat_page("健身教练", "你是一位专业的健身教练，擅长制定健身计划、提供运动建议、解答健身相关问题。", st.session_state.fitness_messages)
+    elif st.session_state.current_page == 'doctor':
+        # 家庭医生页面
+        from pages.family_doctor import show_chat_page
+        show_chat_page("家庭医生", "你是一位专业的家庭医生，擅长提供健康建议、解答医疗问题、提醒健康注意事项。", st.session_state.doctor_messages)
+    else:
+        # 默认显示主页（可以显示欢迎信息或功能说明）
+        st.info("👈 请从上方选择功能模块开始使用")
+        return
+    
 
     # 侧边栏 - 登出按钮
     with st.sidebar:
@@ -645,47 +1323,49 @@ def main():
         if st.button("登出"):
             st.session_state.current_user = None
             st.session_state.messages = []
+            st.session_state.work_messages = []
+            st.session_state.fitness_messages = []
+            st.session_state.doctor_messages = []
             st.session_state.current_memory = None
+            st.session_state.current_page = 'home'
             st.rerun()
-
-    # 侧边栏 - 记忆管理
-    with st.sidebar:
-        st.header("🧠 记忆系统")
-
-        if st.session_state.current_memory is None or not st.session_state.current_memory.get("last_updated"):
-            last_updated = datetime.now()
-            update_text = "记忆尚未初始化"
-        else:
-            last_updated = datetime.fromisoformat(
-                st.session_state.current_memory.get("last_updated", datetime.now().isoformat())
-            )
-            time_diff = (datetime.now() - last_updated).seconds
-
-            update_text = f"最后更新: {last_updated.strftime('%H:%M:%S')} "
-            if st.session_state.memory_refreshed:
-                update_text += "🟢 (刚刚更新)"
-            elif time_diff < 30:
-                update_text += "🟢"
-            elif time_diff < 120:
-                update_text += "🟡"
-            else:
-                update_text += "🔴"
-
-        st.caption(update_text)
-
-        # 显示记忆统计
-        st.subheader("📊 记忆统计")
-        events_count = len(st.session_state.current_memory["events"])
-        profile_count = len(st.session_state.current_memory["profile"])
-        documents_count = len(st.session_state.current_memory.get("documents", []))
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("事件数量", events_count)
-        with col2:
-            st.metric("画像数量", profile_count)
-        with col3:
-            st.metric("文档数量", documents_count)
+        # 只在非记忆管理页面显示记忆统计
+        if st.session_state.current_page != 'memory':
+            if st.session_state.current_memory is None or not st.session_state.current_memory.get("last_updated"):
+                last_updated = datetime.now()
+                update_text = "记忆尚未初始化"
+            else:
+                last_updated = datetime.fromisoformat(
+                    st.session_state.current_memory.get("last_updated", datetime.now().isoformat())
+                )
+                time_diff = (datetime.now() - last_updated).seconds
+
+                update_text = f"最后更新: {last_updated.strftime('%H:%M:%S')} "
+                if st.session_state.memory_refreshed:
+                    update_text += "🟢 (刚刚更新)"
+                elif time_diff < 30:
+                    update_text += "🟢"
+                elif time_diff < 120:
+                    update_text += "🟡"
+                else:
+                    update_text += "🔴"
+
+            st.caption(update_text)
+
+            # 显示记忆统计
+            st.subheader("📊 记忆统计")
+            events_count = len(st.session_state.current_memory["events"])
+            profile_count = len(st.session_state.current_memory["profile"])
+            documents_count = len(st.session_state.current_memory.get("documents", []))
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("事件数量", events_count)
+            with col2:
+                st.metric("画像数量", profile_count)
+            with col3:
+                st.metric("文档数量", documents_count)
 
         # 显示记忆摘要
         st.subheader("记忆摘要")
@@ -756,32 +1436,162 @@ def main():
 
         # 显示画像
         st.subheader("人物画像")
-        profile = st.session_state.current_memory["profile"]
-        if profile:
-            # 显示最近的画像，并添加来源标识
-            for i, p in enumerate(profile[-5:]):  # 只显示最近的5个画像
-                # 检查是否来自文档
-                is_from_document = any(
-                    p in doc.get("profile", []) 
-                    for doc in st.session_state.current_memory.get("documents", [])
-                )
-                icon = "📄" if is_from_document else "💬"
-                st.markdown(f"{icon} {p}")
+        
+        # 优先显示结构化画像
+        structured_profile = st.session_state.current_memory.get("structured_profile", {})
+        formatted_profile = format_profile_display(structured_profile)
+        
+        if formatted_profile:
+            # 显示格式化的结构化画像
+            st.markdown(formatted_profile)
         else:
-            st.caption("暂无画像")
+            # 如果没有结构化画像，显示旧的列表格式
+            profile = st.session_state.current_memory.get("profile", [])
+            if profile:
+                # 显示最近的画像，并添加来源标识
+                for i, p in enumerate(profile[-5:]):  # 只显示最近的5个画像
+                    # 检查是否来自文档
+                    is_from_document = any(
+                        p in doc.get("profile", []) 
+                        for doc in st.session_state.current_memory.get("documents", [])
+                    )
+                    icon = "📄" if is_from_document else "💬"
+                    st.markdown(f"{icon} {p}")
+            else:
+                st.caption("暂无画像")
+        
+        # 调试模块：展示所有原始画像数据
+        with st.expander("🔍 调试：查看所有画像原始数据", expanded=False):
+            memories = st.session_state.current_memory
+            
+            # 1. 当前主记忆中的结构化画像（格式化展示）
+            st.write("#### 📋 当前主记忆中的结构化画像（格式化）")
+            if structured_profile:
+                formatted = format_profile_display(structured_profile)
+                if formatted:
+                    st.markdown(formatted)
+                else:
+                    st.caption("格式化失败")
+            else:
+                st.caption("暂无结构化画像数据")
+            
+            st.divider()
+            
+            # 2. 当前主记忆中的结构化画像（原始JSON）
+            st.write("#### 📄 当前主记忆中的结构化画像（原始JSON）")
+            if structured_profile:
+                st.json(structured_profile)
+            else:
+                st.caption("暂无结构化画像数据")
+            
+            st.divider()
+            
+            # 3. 所有历史画像信息汇总（按时间排序）
+            st.write("#### 📚 所有历史画像信息汇总")
+            documents = memories.get("documents", [])
+            if documents:
+                # 筛选出有结构化画像的文档，按时间排序
+                profile_docs = []
+                for doc in documents:
+                    doc_profile = doc.get("structured_profile", {})
+                    if doc_profile and isinstance(doc_profile, dict):
+                        has_content = any([
+                            doc_profile.get("basic_info"),
+                            doc_profile.get("work"),
+                            doc_profile.get("education"),
+                            doc_profile.get("health"),
+                            doc_profile.get("hobbies"),
+                            doc_profile.get("preferences"),
+                            doc_profile.get("customs"),
+                            doc_profile.get("other")
+                        ])
+                        if has_content:
+                            profile_docs.append(doc)
+                
+                # 按时间戳排序，最新的在前
+                profile_docs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+                
+                if profile_docs:
+                    st.write(f"**共找到 {len(profile_docs)} 个包含画像信息的文档/图片**")
+                    for idx, doc in enumerate(profile_docs, 1):
+                        doc_type = doc.get("type", "document")
+                        doc_name = doc.get("filename", "未知文件")
+                        timestamp = doc.get("timestamp", "")
+                        
+                        # 格式化时间戳
+                        time_str = ""
+                        if timestamp:
+                            try:
+                                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                            except:
+                                time_str = timestamp[:19] if len(timestamp) >= 19 else timestamp
+                        
+                        icon = "🖼️" if doc_type == "image" else "📄"
+                        st.write(f"**{idx}. {icon} {doc_name}**" + (f" （{time_str}）" if time_str else ""))
+                        
+                        doc_structured = doc.get("structured_profile", {})
+                        if doc_structured:
+                            # 格式化展示
+                            formatted = format_profile_display(doc_structured)
+                            if formatted:
+                                st.markdown(formatted)
+                            # 原始JSON
+                            with st.expander(f"查看原始JSON", expanded=False):
+                                st.json(doc_structured)
+                        
+                        doc_profile = doc.get("profile", [])
+                        if doc_profile:
+                            st.write(f"**旧格式画像列表：** {', '.join(doc_profile)}")
+                        
+                        st.write("---")
+                else:
+                    st.caption("所有文档中都没有结构化画像信息")
+            else:
+                st.caption("暂无文档记录")
+            
+            st.divider()
+            
+            # 4. 旧格式画像列表（兼容性展示）
+            st.write("#### 📝 旧格式画像列表 (profile)")
+            profile = memories.get("profile", [])
+            if profile:
+                st.write(f"**总数：{len(profile)}**")
+                for idx, p in enumerate(profile, 1):
+                    # 检查是否来自文档
+                    is_from_document = any(
+                        p in doc.get("profile", []) 
+                        for doc in memories.get("documents", [])
+                    )
+                    source = "📄 文档" if is_from_document else "💬 对话"
+                    st.write(f"{idx}. [{source}] {p}")
+            else:
+                st.caption("暂无画像列表数据")
+            
+            st.divider()
+            
+            # 5. 画像信息统计
+            st.write("#### 📊 画像信息统计")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("结构化画像字段数", len([k for k, v in (structured_profile or {}).items() if v and k not in ["basic_info_history", "health_history"]]))
+            with col2:
+                st.metric("包含画像的文档数", len([d for d in (documents or []) if d.get("structured_profile")]))
+            with col3:
+                st.metric("旧格式画像数", len(profile))
 
         # 记忆操作
         st.divider()
         st.subheader("记忆操作")
         
-        # 文档上传功能
-        st.subheader("📄 文档记忆管理")
+        # 文档和图片上传功能
+        st.subheader("📄 文档/图片记忆管理")
         
         uploaded_file = st.file_uploader(
-            "上传文档添加到记忆", 
-            type=["pdf", "txt"], 
+            "上传文档或图片添加到记忆", 
+            type=["pdf", "txt", "png", "jpg", "jpeg"], 
             key="document_uploader",
-            help="支持PDF和TXT格式，文档内容将被分析并添加到您的记忆中"
+            help="支持PDF、TXT、PNG、JPG格式，内容将被分析并添加到您的记忆中"
         )
         
         if uploaded_file is not None:
@@ -791,9 +1601,74 @@ def main():
 
             # 只有当文件是新的时候才处理
             if file_id != st.session_state.processed_file_id:
-                with st.spinner("正在处理文档..."):
-                    document_text, error = process_uploaded_document(uploaded_file)
-                
+                # 处理图片
+                if uploaded_file.type.startswith("image/"):
+                    # 显示上传的图片
+                    st.image(uploaded_file, caption="上传的图片", use_container_width=True)
+                    
+                    # 处理图片并转换为base64
+                    image_data_url, error = process_uploaded_image(uploaded_file)
+                    
+                    if error:
+                        st.error(error)
+                    else:
+                        # 使用多模态模型分析图片（优先使用Doubao，支持多模态）
+                        with st.spinner("正在使用AI识别图片内容..."):
+                            image_info = analyze_image_with_vision(
+                                image_data_url,
+                                st.session_state.current_memory["events"][-5:],
+                                st.session_state.current_memory["profile"][-5:],
+                                uploaded_file.name,
+                                provider="doubao"  # 使用Doubao进行图片识别
+                            )
+                        
+                        # 检查是否有错误
+                        if image_info.get('error'):
+                            st.warning(f"⚠️ {image_info.get('description', '图片识别遇到问题')}")
+                        else:
+                            # 显示识别结果
+                            st.success("✅ 图片识别完成！")
+                            st.write(f"**图片标题：** {image_info.get('title', '未知')}")
+                            st.write(f"**图片描述：** {image_info.get('description', '无描述')}")
+                            
+                            # 显示提取的信息
+                            if image_info.get('events') or image_info.get('profile'):
+                                st.info(f"📊 提取结果：{len(image_info.get('events', []))} 个事件，{len(image_info.get('profile', []))} 个画像信息")
+                                
+                                if image_info.get('events'):
+                                    st.write("**📷 提取的事件：**")
+                                    for event in image_info['events']:
+                                        st.write(f"• {event}")
+                                
+                                if image_info.get('profile'):
+                                    st.write("**📷 提取的画像：**")
+                                    for profile in image_info['profile']:
+                                        st.write(f"• {profile}")
+                        
+                        # 更新记忆（使用update_image_memory函数）
+                        updated_memory = update_image_memory(
+                            image_info,
+                            st.session_state.current_user,
+                            uploaded_file.name
+                        )
+                        st.session_state.current_memory = updated_memory
+                        st.session_state.memory_refreshed = True
+                        
+                        # 标记文件为已处理
+                        st.session_state.processed_file_id = file_id
+                        
+                        if not image_info.get('error'):
+                            st.success(f"✅ 图片《{uploaded_file.name}》已成功添加到记忆中！")
+                        else:
+                            st.info(f"ℹ️ 图片《{uploaded_file.name}》已保存，但识别功能需要支持多模态的API。")
+                        
+                        # 强制刷新页面以更新侧边栏
+                        st.rerun()
+                else:
+                    # 处理文档
+                    with st.spinner("正在处理文档..."):
+                        document_text, error = process_uploaded_document(uploaded_file)
+                    
                     if error:
                         st.error(error)
                     else:
@@ -855,13 +1730,22 @@ def main():
         if documents:
             st.subheader("已上传的文档")
             for i, doc in enumerate(documents[-3:]):  # 显示最近3个文档
-                with st.expander(f"📄 {doc['filename']} ({doc['timestamp'][:10]})"):
-                    st.write(f"**摘要：** {doc['summary']}")
-                    if doc['events']:
+                # 兼容文档和图片两种类型，文档使用summary，图片使用description
+                doc_type = doc.get('type', 'document')
+                doc_title = doc.get('title', '') if doc_type == 'image' else ''
+                doc_summary = doc.get('summary', '') if doc_type == 'document' else doc.get('description', '')
+                
+                icon = "🖼️" if doc_type == 'image' else "📄"
+                with st.expander(f"{icon} {doc.get('filename', '未知文件')} ({doc.get('timestamp', '')[:10]})"):
+                    if doc_title:
+                        st.write(f"**标题：** {doc_title}")
+                    if doc_summary:
+                        st.write(f"**摘要：** {doc_summary}")
+                    if doc.get('events'):
                         st.write("**提取事件：**")
                         for event in doc['events']:
                             st.write(f"• {event}")
-                    if doc['profile']:
+                    if doc.get('profile'):
                         st.write("**提取画像：**")
                         for profile in doc['profile']:
                             st.write(f"• {profile}")

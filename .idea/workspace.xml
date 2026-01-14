@@ -4,10 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9461d7cc-6ca4-4198-8c43-5f52dbc0ae8f" name="更改" comment="修复历史回答不显示问题">
-      <change beforePath="$PROJECT_DIR$/chat_memories/users.json" beforeDir="false" afterPath="$PROJECT_DIR$/chat_memories/users.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pages/1_File_Q&amp;A.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/pages/meomory_test.py" beforeDir="false" afterPath="$PROJECT_DIR$/pages/meomory_test.py" afterDir="false" />
+    <list default="true" id="9461d7cc-6ca4-4198-8c43-5f52dbc0ae8f" name="更改" comment="增加上传文件提取记忆的功能">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/chat_memories/liming_memory.json" beforeDir="false" afterPath="$PROJECT_DIR$/chat_memories/liming_memory.json" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -25,27 +24,27 @@
   <component name="ProblemsViewState">
     <option name="selectedTabId" value="CurrentFile" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 8
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 8
+}</component>
   <component name="ProjectId" id="30cQo3aWNVEDkuKHRmhS8SCnpWp" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "test",
-    "ignore.virus.scanning.warn.message": "true",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "D:/Users/80416556/IdeaProjects/chatbot",
-    "project.structure.last.edited": "模块",
-    "project.structure.proportion": "0.15",
-    "project.structure.side.proportion": "0.2"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;test&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/Users/80416556/IdeaProjects/chatbot&quot;,
+    &quot;project.structure.last.edited&quot;: &quot;模块&quot;,
+    &quot;project.structure.proportion&quot;: &quot;0.15&quot;,
+    &quot;project.structure.side.proportion&quot;: &quot;0.2&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="D:\Users\80416556\IdeaProjects\chatbot" />
@@ -100,7 +99,23 @@
       <option name="project" value="LOCAL" />
       <updated>1753945840026</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="增加上传文件提取记忆的功能">
+      <option name="closed" value="true" />
+      <created>1753960889555</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1753960889555</updated>
+    </task>
+    <task id="LOCAL-00007" summary="增加上传文件提取记忆的功能">
+      <option name="closed" value="true" />
+      <created>1753961047500</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1753961047500</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -129,6 +144,7 @@
     <MESSAGE value="回答更改为流式api调用" />
     <MESSAGE value="增加身份认证，可管理多用户记忆" />
     <MESSAGE value="修复历史回答不显示问题" />
-    <option name="LAST_COMMIT_MESSAGE" value="修复历史回答不显示问题" />
+    <MESSAGE value="增加上传文件提取记忆的功能" />
+    <option name="LAST_COMMIT_MESSAGE" value="增加上传文件提取记忆的功能" />
   </component>
 </project>

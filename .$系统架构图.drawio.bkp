@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2024-01-01T00:00:00.000Z" agent="5.0" etag="xxx" version="22.1.0" type="device">
+  <diagram name="智能助手系统架构" id="architecture">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- 标题 -->
+        <mxCell id="title" value="智能助手系统架构图" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="40" width="320" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- 用户界面层 -->
+        <mxCell id="ui-layer" value="用户界面层" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=16;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="120" y="120" width="200" height="200" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ui-chat" value="• 聊天界面" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="140" y="160" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ui-auth" value="• 登录/注册" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="140" y="190" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ui-upload" value="• 文档上传" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="140" y="220" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ui-memory" value="• 记忆可视化" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="140" y="250" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- 业务逻辑层 -->
+        <mxCell id="business-layer" value="业务逻辑层" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=16;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="420" y="120" width="200" height="200" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="business-auth" value="• 用户认证" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="160" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="business-memory" value="• 记忆管理" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="190" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="business-chat" value="• 对话处理" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="220" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="business-api" value="• API调用" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="250" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- 数据存储层 -->
+        <mxCell id="data-layer" value="数据存储层" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=16;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="720" y="120" width="200" height="200" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="data-user" value="• 用户数据库" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="740" y="160" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="data-memory" value="• 记忆文件" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="740" y="190" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="data-doc" value="• 文档存储" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="740" y="220" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- 外部服务层 -->
+        <mxCell id="external-layer" value="外部服务层" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=16;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="420" y="400" width="200" height="120" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="external-deepseek" value="• DeepSeek API" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="440" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="external-doc" value="• 文档解析服务" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="470" width="160" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- 连接线 -->
+        <!-- UI -> Business -->
+        <mxCell id="arrow1" value="" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#666666;" edge="1" parent="1" source="ui-layer" target="business-layer">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="370" y="220" as="sourcePoint" />
+            <mxPoint x="420" y="170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Business -> Data -->
+        <mxCell id="arrow2" value="" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#666666;" edge="1" parent="1" source="business-layer" target="data-layer">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="670" y="220" as="sourcePoint" />
+            <mxPoint x="720" y="170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Business -> External -->
+        <mxCell id="arrow3" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=3;strokeColor=#666666;" edge="1" parent="1" source="business-layer" target="external-layer">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="520" y="330" as="sourcePoint" />
+            <mxPoint x="520" y="400" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- 数据流说明 -->
+        <mxCell id="flow1" value="用户交互" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="340" y="190" width="60" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="flow2" value="数据存取" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="640" y="190" width="60" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="flow3" value="API调用" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="530" y="360" width="60" height="20" as="geometry" />
+        </mxCell>
+        
+        <!-- 技术栈说明 -->
+        <mxCell id="tech-stack" value="技术栈" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=14;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="40" y="400" width="320" height="120" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="tech-frontend" value="前端框架：Streamlit" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="50" y="430" width="150" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="tech-ai" value="AI模型：DeepSeek API" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="50" y="450" width="150" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="tech-doc" value="文档处理：PyPDF2 + LangChain" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="50" y="470" width="200" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="tech-storage" value="数据存储：本地JSON文件" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="50" y="490" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <!-- 功能特性说明 -->
+        <mxCell id="features" value="核心特性" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=14;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="720" y="400" width="200" height="120" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature1" value="🧠 长期记忆管理" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="730" y="430" width="120" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature2" value="📄 文档智能分析" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="730" y="450" width="120" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature3" value="🎯 个性化对话" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="730" y="470" width="120" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature4" value="📊 可视化界面" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="730" y="490" width="120" height="20" as="geometry" />
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile> 
