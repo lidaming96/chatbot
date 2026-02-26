@@ -333,6 +333,11 @@ def update_image_memory(image_info, username, filename):
             timestamp=image_timestamp,
             memories=memories  # 传入memories以整合所有历史画像信息
         )
+    # 无论是否有新的结构化画像，都整合所有记忆（因为可能有新的旧格式画像或其他信息）
+    try:
+        memories = integrate_all_memories_to_profile(username)
+    except Exception as e:
+        print(f"警告：图片记忆更新后整合记忆时出错: {str(e)}")
     
     # 更新记忆摘要
     if memories["summary"] == "这是一位新用户，尚未形成长期记忆。":
@@ -783,10 +788,46 @@ def merge_education_info(existing_info, new_info):
     # 合并多段教育经历
     return f"{existing_info}；{new_info}"
 
+# 整合所有记忆并生成新的结构化画像
+def integrate_all_memories_to_profile(username):
+    """
+    整合用户的所有记忆（包括文档、图片、对话记录），生成新的结构化画像
+    
+    Args:
+        username: 用户名
+    
+    Returns:
+        更新后的记忆对象
+    """
+    memories = load_memories(username)
+    
+    # 获取现有的结构化画像（如果有）
+    existing_structured_profile = memories.get("structured_profile", {})
+    
+    # 如果没有结构化画像，创建一个空的
+    if not existing_structured_profile:
+        existing_structured_profile = {}
+    
+    # 调用 regenerate_structured_profile 整合所有记忆
+    # 传入 memories 以整合所有历史画像信息
+    new_structured_profile = regenerate_structured_profile(
+        existing_structured_profile,
+        memories=memories
+    )
+    
+    # 更新记忆中的结构化画像
+    memories["structured_profile"] = new_structured_profile
+    memories["last_updated"] = datetime.now().isoformat()
+    
+    # 保存更新后的记忆
+    save_memories(memories, username)
+    
+    return memories
+
 # 使用LLM重新生成综合的结构化画像
 def regenerate_structured_profile(merged_profile, memories=None):
     """
-    使用LLM综合所有信息，重新生成一份完整的结构化画像信息
+    使用LLM综合所有历史画像信息，重新生成一份完整的结构化画像信息
     
     Args:
         merged_profile: 合并后的结构化画像字典
@@ -806,32 +847,49 @@ def regenerate_structured_profile(merged_profile, memories=None):
         all_profile_data.append({
             "source": "主记忆（最新合并）",
             "profile": merged_profile,
+            "structured_profile": merged_profile,
             "timestamp": merged_profile.get("_last_updated") or datetime.now().isoformat()
         })
     
-    # 2. 从所有文档中提取结构化画像
+    # 2. 主记忆中的旧格式画像列表
     if memories and isinstance(memories, dict):
+        old_profile_list = memories.get("profile", [])
+        if old_profile_list:
+            all_profile_data.append({
+                "source": "主记忆（旧格式画像列表）",
+                "profile": old_profile_list,
+                "structured_profile": None,
+                "timestamp": memories.get("last_updated", datetime.now().isoformat())
+            })
+        
+        # 3. 从所有文档中提取结构化画像和旧格式画像
         documents = memories.get("documents", [])
         for doc in documents:
-            doc_profile = doc.get("structured_profile", {})
-            if doc_profile and isinstance(doc_profile, dict):
-                # 只收集有实际内容的画像
-                has_content = any([
-                    doc_profile.get("basic_info"),
-                    doc_profile.get("work"),
-                    doc_profile.get("education"),
-                    doc_profile.get("health"),
-                    doc_profile.get("hobbies"),
-                    doc_profile.get("preferences"),
-                    doc_profile.get("customs"),
-                    doc_profile.get("other")
-                ])
-                if has_content:
-                    all_profile_data.append({
-                        "source": f"文档：{doc.get('filename', '未知文件')}",
-                        "profile": doc_profile,
-                        "timestamp": doc.get("timestamp", "")
-                    })
+            doc_structured = doc.get("structured_profile", {})
+            doc_profile = doc.get("profile", [])
+            
+            # 检查是否有任何画像信息
+            has_structured = doc_structured and isinstance(doc_structured, dict) and any([
+                doc_structured.get("basic_info"),
+                doc_structured.get("work"),
+                doc_structured.get("education"),
+                doc_structured.get("health"),
+                doc_structured.get("hobbies"),
+                doc_structured.get("preferences"),
+                doc_structured.get("customs"),
+                doc_structured.get("other")
+            ])
+            has_profile = doc_profile and isinstance(doc_profile, list) and len(doc_profile) > 0
+            
+            if has_structured or has_profile:
+                doc_type = doc.get("type", "document")
+                doc_name = doc.get("filename", "未知文件")
+                all_profile_data.append({
+                    "source": f"{'图片' if doc_type == 'image' else '文档'}：{doc_name}",
+                    "profile": doc_profile if has_profile else None,
+                    "structured_profile": doc_structured if has_structured else None,
+                    "timestamp": doc.get("timestamp", "")
+                })
     
     # 如果没有收集到任何画像信息，返回原始合并结果
     if not all_profile_data:
@@ -843,11 +901,13 @@ def regenerate_structured_profile(merged_profile, memories=None):
     # 构建综合信息描述
     profile_summary = []
     profile_summary.append("=== 所有历史画像信息汇总 ===\n")
+    profile_summary.append("**注意：以下信息必须全部整合到最终的结构化画像中，不能遗漏任何信息！**\n")
     
     # 按来源分组展示所有画像信息
     for idx, data in enumerate(all_profile_data, 1):
         source = data["source"]
-        profile = data["profile"]
+        structured = data.get("structured_profile")
+        profile_list = data.get("profile")
         timestamp = data.get("timestamp", "")
         
         # 格式化时间戳
@@ -861,27 +921,34 @@ def regenerate_structured_profile(merged_profile, memories=None):
         
         profile_summary.append(f"\n【来源 {idx}】{source}" + (f"（{time_str}）" if time_str else ""))
         
-        # 基础信息
-        if profile.get("basic_info"):
-            profile_summary.append(f"  基础信息：{profile['basic_info']}")
+        # 结构化画像信息
+        if structured and isinstance(structured, dict):
+            # 基础信息
+            if structured.get("basic_info"):
+                profile_summary.append(f"  ✓ 基础信息：{structured['basic_info']}")
+            
+            # 工作信息
+            if structured.get("work"):
+                profile_summary.append(f"  ✓ 工作：{structured['work']}")
+            
+            # 教育信息
+            if structured.get("education"):
+                profile_summary.append(f"  ✓ 教育：{structured['education']}")
+            
+            # 健康信息
+            if structured.get("health"):
+                profile_summary.append(f"  ✓ 健康：{structured['health']}")
+            
+            # 数组字段
+            for key, label in [("hobbies", "爱好"), ("preferences", "偏好"), ("customs", "日常习惯"), ("other", "其他")]:
+                items = structured.get(key, [])
+                if items and isinstance(items, list) and len(items) > 0:
+                    profile_summary.append(f"  ✓ {label}：{'、'.join(items)}")
         
-        # 工作信息
-        if profile.get("work"):
-            profile_summary.append(f"  工作：{profile['work']}")
-        
-        # 教育信息
-        if profile.get("education"):
-            profile_summary.append(f"  教育：{profile['education']}")
-        
-        # 健康信息
-        if profile.get("health"):
-            profile_summary.append(f"  健康：{profile['health']}")
-        
-        # 数组字段
-        for key, label in [("hobbies", "爱好"), ("preferences", "偏好"), ("customs", "日常习惯"), ("other", "其他")]:
-            items = profile.get(key, [])
-            if items and isinstance(items, list) and len(items) > 0:
-                profile_summary.append(f"  {label}：{'、'.join(items)}")
+        # 旧格式画像列表（重要：必须提取这些信息）
+        if profile_list and isinstance(profile_list, list) and len(profile_list) > 0:
+            profile_summary.append(f"  ⚠️ 旧格式画像列表（必须提取并整合）：{', '.join(profile_list)}")
+            profile_summary.append(f"    提示：请仔细分析上述旧格式画像列表，将相关信息映射到结构化字段中")
     
     # 添加主记忆中的历史记录信息
     if merged_profile.get("basic_info_history"):
@@ -900,17 +967,44 @@ def regenerate_structured_profile(merged_profile, memories=None):
     # 构建 prompt
     from utils.profile_extraction_prompts import STRUCTURED_PROFILE_TEMPLATE, STRUCTURED_PROFILE_NOTES
     
-    prompt = f"""请根据以下所有历史画像信息，重新生成一份完整、准确、结构化的用户画像信息。
+    prompt = f"""请根据以下所有历史画像信息，重新生成一份**完整、准确、全面**的结构化用户画像信息。
+
+**重要：必须整合所有来源的信息，不能遗漏任何信息！**
 
 {chr(10).join(profile_summary)}
 
-要求：
-1. **综合所有历史画像信息**，包括所有文档、图片和对话中提取的画像信息
-2. 对于基础信息和健康信息，优先使用最新的信息作为主信息，但也要考虑历史信息的完整性
-3. 如果信息有冲突，优先使用时间戳最新的信息
-4. 对于工作、教育、爱好、偏好等字段，需要整合所有来源的信息，避免遗漏
-5. 确保所有字段都按照以下格式输出：
+**严格要求：**
+1. **必须综合所有历史画像信息**，包括：
+   - 所有文档中的结构化画像和旧格式画像列表
+   - 所有图片中的结构化画像和旧格式画像列表
+   - 主记忆中的结构化画像和旧格式画像列表
+   - 所有历史记录信息
 
+2. **信息整合规则：**
+   - 对于基础信息（年龄、性别、身高、居住地等）：优先使用最新的信息，但如果历史信息中有更详细的内容，需要整合进去
+   - 对于工作信息：必须整合所有工作经历，用分号分隔，不能遗漏任何工作信息
+   - 对于教育信息：必须整合所有教育经历（高中、本科、硕士等），用分号分隔，不能遗漏
+   - 对于健康信息：优先使用最新的信息，但历史信息也要考虑
+   - 对于爱好、偏好、日常习惯、其他信息：必须整合所有来源的信息，合并所有数组，去重后全部包含
+
+3. **从旧格式画像列表中提取信息：**
+   - 仔细分析旧格式画像列表中的每一项
+   - 将相关信息映射到对应的结构化字段中
+   - 例如："用户是一名软件工程师" → 工作字段
+   - 例如："用户家住深圳" → 基础信息中的居住地
+   - 例如："喜欢健身" → 爱好数组
+   - 例如："偏好甜食" → 偏好数组
+
+4. **信息冲突处理：**
+   - 如果信息有冲突，优先使用时间戳最新的信息
+   - 但如果旧信息更详细，可以整合新旧信息
+
+5. **完整性要求：**
+   - **必须检查每个字段是否包含了所有来源的信息**
+   - **不能因为信息重复就省略**
+   - **确保所有提到的信息都在最终的结构化画像中**
+
+6. **字段格式要求：**
 {STRUCTURED_PROFILE_TEMPLATE}
 
 {STRUCTURED_PROFILE_NOTES}
@@ -955,6 +1049,20 @@ def regenerate_structured_profile(merged_profile, memories=None):
         
         # 解析JSON
         regenerated_profile = json.loads(cleaned_response)
+        
+        # 验证 regenerated_profile 是否包含所有必需字段
+        if not isinstance(regenerated_profile, dict):
+            print(f"警告：重新生成的画像不是字典格式，返回原始合并结果")
+            return merged_profile
+        
+        # 确保所有字段都存在（即使为空）
+        required_fields = ["basic_info", "work", "education", "health", "hobbies", "preferences", "customs", "other"]
+        for field in required_fields:
+            if field not in regenerated_profile:
+                if field in ["hobbies", "preferences", "customs", "other"]:
+                    regenerated_profile[field] = []
+                else:
+                    regenerated_profile[field] = None
         
         # 保留历史记录信息
         if merged_profile.get("basic_info_history"):
@@ -1088,6 +1196,11 @@ def update_document_memory(document_info, username):
             timestamp=document_timestamp,
             memories=memories  # 传入memories以整合所有历史画像信息
         )
+    # 无论是否有新的结构化画像，都整合所有记忆（因为可能有新的旧格式画像或其他信息）
+    try:
+        memories = integrate_all_memories_to_profile(username)
+    except Exception as e:
+        print(f"警告：文档记忆更新后整合记忆时出错: {str(e)}")
     
     # 更新记忆摘要
     if memories["summary"] == "这是一位新用户，尚未形成长期记忆。":
@@ -1141,6 +1254,23 @@ def update_memory_system(new_conversation, username):
     # 使用去重函数处理新内容
     memories["events"] = deduplicate_items(memories["events"], new_memory['events'])
     memories["profile"] = deduplicate_items(memories["profile"], new_memory['profile'])
+    
+    # 合并结构化画像信息（如果对话提取到了结构化画像）
+    new_structured_profile = new_memory.get("structured_profile", {})
+    if new_structured_profile:
+        conversation_timestamp = datetime.now().isoformat()
+        existing_structured_profile = memories.get("structured_profile", {})
+        memories["structured_profile"] = merge_structured_profile(
+            existing_structured_profile,
+            new_structured_profile,
+            timestamp=conversation_timestamp,
+            memories=memories  # 传入memories以整合所有历史画像信息
+        )
+    # 无论是否有新的结构化画像，都整合所有记忆（因为可能有新的旧格式画像或其他信息）
+    try:
+        memories = integrate_all_memories_to_profile(username)
+    except Exception as e:
+        print(f"警告：对话记忆更新后整合记忆时出错: {str(e)}")
 
     # 4. 生成对话摘要（但不包含在get_memory_context中）
     conversation_summary = summarize_conversation(new_conversation)
@@ -1213,6 +1343,12 @@ def main():
         st.session_state.fitness_messages = []
     if 'doctor_messages' not in st.session_state:
         st.session_state.doctor_messages = []
+    if 'food_messages' not in st.session_state:
+        st.session_state.food_messages = []
+    if 'travel_messages' not in st.session_state:
+        st.session_state.travel_messages = []
+    if 'investment_messages' not in st.session_state:
+        st.session_state.investment_messages = []
 
     # 用户认证流程
     if not st.session_state.current_user:
@@ -1253,6 +1389,14 @@ def main():
                     if success:
                         st.session_state.current_user = username
                         st.session_state.messages = []
+                        # 登录成功后，整合所有记忆并生成新的结构化画像
+                        try:
+                            memories = integrate_all_memories_to_profile(username)
+                            st.session_state.current_memory = memories
+                        except Exception as e:
+                            print(f"警告：登录后整合记忆时出错: {str(e)}")
+                            # 如果整合失败，加载原始记忆
+                            st.session_state.current_memory = load_memories(username)
                         st.rerun()
                     else:
                         st.error(message)
@@ -1263,32 +1407,68 @@ def main():
 
     # 首次加载时需要初始化current_memory
     if st.session_state.current_memory is None:
-        st.session_state.current_memory = load_memories(st.session_state.current_user)
+        memories = load_memories(st.session_state.current_user)
+        # 检查是否需要整合记忆（如果记忆中有任何画像信息，就整合）
+        has_profile_info = (
+            memories.get("profile") or 
+            memories.get("structured_profile") or 
+            any(doc.get("profile") or doc.get("structured_profile") for doc in memories.get("documents", []))
+        )
+        if has_profile_info:
+            # 整合所有记忆，生成新的结构化画像
+            try:
+                memories = integrate_all_memories_to_profile(st.session_state.current_user)
+            except Exception as e:
+                print(f"警告：整合记忆时出错: {str(e)}")
+                # 如果整合失败，继续使用原始记忆
+        st.session_state.current_memory = memories
 
     # 导航菜单
-    st.title("🤖 智能助手")
+    st.title("🏠 菜单")
     
-    # 创建4个功能模块的导航
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
+    # 系统功能区域 - 记忆管理（独立区域）
+    st.subheader("⚙️ 系统功能")
+    col_memory = st.columns(1)
+    with col_memory[0]:
         if st.button("🧠 记忆管理", use_container_width=True, type="primary" if st.session_state.current_page == 'memory' else "secondary"):
             st.session_state.current_page = 'memory'
             st.rerun()
     
-    with col2:
+    st.divider()
+    
+    # 专业助手区域 - 各种专业助手（不包含记忆管理）
+    st.subheader("👨‍💼 专业助手")
+    col1, col2, col3 = st.columns(3)
+    col4, col5, col6 = st.columns(3)
+    
+    with col1:
         if st.button("💼 工作秘书", use_container_width=True, type="primary" if st.session_state.current_page == 'work' else "secondary"):
             st.session_state.current_page = 'work'
             st.rerun()
     
-    with col3:
+    with col2:
         if st.button("💪 健身教练", use_container_width=True, type="primary" if st.session_state.current_page == 'fitness' else "secondary"):
             st.session_state.current_page = 'fitness'
             st.rerun()
     
-    with col4:
+    with col3:
         if st.button("🏥 家庭医生", use_container_width=True, type="primary" if st.session_state.current_page == 'doctor' else "secondary"):
             st.session_state.current_page = 'doctor'
+            st.rerun()
+    
+    with col4:
+        if st.button("🍽️ 美食专家", use_container_width=True, type="primary" if st.session_state.current_page == 'food' else "secondary"):
+            st.session_state.current_page = 'food'
+            st.rerun()
+    
+    with col5:
+        if st.button("✈️ 旅行规划", use_container_width=True, type="primary" if st.session_state.current_page == 'travel' else "secondary"):
+            st.session_state.current_page = 'travel'
+            st.rerun()
+    
+    with col6:
+        if st.button("📈 投资助手", use_container_width=True, type="primary" if st.session_state.current_page == 'investment' else "secondary"):
+            st.session_state.current_page = 'investment'
             st.rerun()
     
     st.divider()
@@ -1310,6 +1490,18 @@ def main():
         # 家庭医生页面
         from pages.family_doctor import show_chat_page
         show_chat_page("家庭医生", "你是一位专业的家庭医生，擅长提供健康建议、解答医疗问题、提醒健康注意事项。", st.session_state.doctor_messages)
+    elif st.session_state.current_page == 'food':
+        # 美食专家页面
+        from pages.food_expert import show_chat_page
+        show_chat_page("美食专家", "你是一位专业的美食专家，擅长提供烹饪建议、食谱推荐、食材搭配、美食文化等专业建议。", st.session_state.food_messages)
+    elif st.session_state.current_page == 'travel':
+        # 旅行规划页面
+        from pages.travel_planner import show_chat_page
+        show_chat_page("旅行规划", "你是一位专业的旅行规划师，擅长制定旅行计划、推荐景点、安排行程、提供交通和住宿建议等。", st.session_state.travel_messages)
+    elif st.session_state.current_page == 'investment':
+        # 投资助手页面
+        from pages.investment_assistant import show_chat_page
+        show_chat_page("投资助手", st.session_state.investment_messages)
     else:
         # 默认显示主页（可以显示欢迎信息或功能说明）
         st.info("👈 请从上方选择功能模块开始使用")
@@ -1326,6 +1518,9 @@ def main():
             st.session_state.work_messages = []
             st.session_state.fitness_messages = []
             st.session_state.doctor_messages = []
+            st.session_state.food_messages = []
+            st.session_state.travel_messages = []
+            st.session_state.investment_messages = []
             st.session_state.current_memory = None
             st.session_state.current_page = 'home'
             st.rerun()
@@ -1367,7 +1562,51 @@ def main():
             with col3:
                 st.metric("文档数量", documents_count)
 
-        # 显示记忆摘要
+        # 显示画像（调整到前面）
+        st.subheader("人物画像")
+        
+        # 优先显示结构化画像
+        structured_profile = st.session_state.current_memory.get("structured_profile", {})
+        formatted_profile = format_profile_display(structured_profile)
+        
+        if formatted_profile:
+            # 显示格式化的结构化画像，每一点分行展示
+            # 将格式化后的文本按行分割，每行单独显示
+            profile_lines = formatted_profile.split('\n')
+            for line in profile_lines:
+                if line.strip():  # 只显示非空行
+                    st.markdown(line)
+        else:
+            # 如果没有结构化画像，显示旧的列表格式
+            profile = st.session_state.current_memory.get("profile", [])
+            if profile:
+                for p in profile[-5:]:  # 只显示最近的5个画像
+                    is_from_document = any(
+                        p in doc.get("profile", [])
+                        for doc in st.session_state.current_memory.get("documents", [])
+                    )
+                    icon = "📄" if is_from_document else "💬"
+                    st.markdown(f"{icon} {p}")
+            else:
+                st.caption("暂无画像")
+
+        # 显示事件
+        st.subheader("近期事件")
+        events = st.session_state.current_memory["events"]
+        if events:
+            # 显示最近的事件，并添加来源标识
+            for i, e in enumerate(events[-5:]):  # 只显示最近的5个事件
+                # 检查是否来自文档
+                is_from_document = any(
+                    e in doc.get("events", []) 
+                    for doc in st.session_state.current_memory.get("documents", [])
+                )
+                icon = "📄" if is_from_document else "💬"
+                st.markdown(f"{icon} {e}")
+        else:
+            st.caption("暂无事件")
+        
+        # 显示记忆摘要（移到最后）
         st.subheader("记忆摘要")
         memory_summary = st.session_state.current_memory["summary"]
         
@@ -1417,168 +1656,45 @@ def main():
             {memory_summary}
             </div>
             """, unsafe_allow_html=True)
-
-        # 显示事件
-        st.subheader("近期事件")
-        events = st.session_state.current_memory["events"]
-        if events:
-            # 显示最近的事件，并添加来源标识
-            for i, e in enumerate(events[-5:]):  # 只显示最近的5个事件
-                # 检查是否来自文档
-                is_from_document = any(
-                    e in doc.get("events", []) 
-                    for doc in st.session_state.current_memory.get("documents", [])
-                )
-                icon = "📄" if is_from_document else "💬"
-                st.markdown(f"{icon} {e}")
-        else:
-            st.caption("暂无事件")
-
-        # 显示画像
-        st.subheader("人物画像")
-        
-        # 优先显示结构化画像
-        structured_profile = st.session_state.current_memory.get("structured_profile", {})
-        formatted_profile = format_profile_display(structured_profile)
-        
-        if formatted_profile:
-            # 显示格式化的结构化画像
-            st.markdown(formatted_profile)
-        else:
-            # 如果没有结构化画像，显示旧的列表格式
-            profile = st.session_state.current_memory.get("profile", [])
-            if profile:
-                # 显示最近的画像，并添加来源标识
-                for i, p in enumerate(profile[-5:]):  # 只显示最近的5个画像
-                    # 检查是否来自文档
-                    is_from_document = any(
-                        p in doc.get("profile", []) 
-                        for doc in st.session_state.current_memory.get("documents", [])
-                    )
-                    icon = "📄" if is_from_document else "💬"
-                    st.markdown(f"{icon} {p}")
-            else:
-                st.caption("暂无画像")
         
         # 调试模块：展示所有原始画像数据
         with st.expander("🔍 调试：查看所有画像原始数据", expanded=False):
-            memories = st.session_state.current_memory
-            
-            # 1. 当前主记忆中的结构化画像（格式化展示）
-            st.write("#### 📋 当前主记忆中的结构化画像（格式化）")
-            if structured_profile:
-                formatted = format_profile_display(structured_profile)
-                if formatted:
-                    st.markdown(formatted)
-                else:
-                    st.caption("格式化失败")
-            else:
-                st.caption("暂无结构化画像数据")
-            
-            st.divider()
-            
-            # 2. 当前主记忆中的结构化画像（原始JSON）
-            st.write("#### 📄 当前主记忆中的结构化画像（原始JSON）")
+            st.write("#### 结构化画像 (structured_profile)")
             if structured_profile:
                 st.json(structured_profile)
             else:
                 st.caption("暂无结构化画像数据")
             
-            st.divider()
-            
-            # 3. 所有历史画像信息汇总（按时间排序）
-            st.write("#### 📚 所有历史画像信息汇总")
-            documents = memories.get("documents", [])
-            if documents:
-                # 筛选出有结构化画像的文档，按时间排序
-                profile_docs = []
-                for doc in documents:
-                    doc_profile = doc.get("structured_profile", {})
-                    if doc_profile and isinstance(doc_profile, dict):
-                        has_content = any([
-                            doc_profile.get("basic_info"),
-                            doc_profile.get("work"),
-                            doc_profile.get("education"),
-                            doc_profile.get("health"),
-                            doc_profile.get("hobbies"),
-                            doc_profile.get("preferences"),
-                            doc_profile.get("customs"),
-                            doc_profile.get("other")
-                        ])
-                        if has_content:
-                            profile_docs.append(doc)
-                
-                # 按时间戳排序，最新的在前
-                profile_docs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-                
-                if profile_docs:
-                    st.write(f"**共找到 {len(profile_docs)} 个包含画像信息的文档/图片**")
-                    for idx, doc in enumerate(profile_docs, 1):
-                        doc_type = doc.get("type", "document")
-                        doc_name = doc.get("filename", "未知文件")
-                        timestamp = doc.get("timestamp", "")
-                        
-                        # 格式化时间戳
-                        time_str = ""
-                        if timestamp:
-                            try:
-                                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                            except:
-                                time_str = timestamp[:19] if len(timestamp) >= 19 else timestamp
-                        
-                        icon = "🖼️" if doc_type == "image" else "📄"
-                        st.write(f"**{idx}. {icon} {doc_name}**" + (f" （{time_str}）" if time_str else ""))
-                        
-                        doc_structured = doc.get("structured_profile", {})
-                        if doc_structured:
-                            # 格式化展示
-                            formatted = format_profile_display(doc_structured)
-                            if formatted:
-                                st.markdown(formatted)
-                            # 原始JSON
-                            with st.expander(f"查看原始JSON", expanded=False):
-                                st.json(doc_structured)
-                        
-                        doc_profile = doc.get("profile", [])
-                        if doc_profile:
-                            st.write(f"**旧格式画像列表：** {', '.join(doc_profile)}")
-                        
-                        st.write("---")
-                else:
-                    st.caption("所有文档中都没有结构化画像信息")
-            else:
-                st.caption("暂无文档记录")
-            
-            st.divider()
-            
-            # 4. 旧格式画像列表（兼容性展示）
-            st.write("#### 📝 旧格式画像列表 (profile)")
-            profile = memories.get("profile", [])
+            st.write("#### 旧格式画像列表 (profile)")
+            profile = st.session_state.current_memory.get("profile", [])
             if profile:
                 st.write(f"**总数：{len(profile)}**")
                 for idx, p in enumerate(profile, 1):
                     # 检查是否来自文档
                     is_from_document = any(
                         p in doc.get("profile", []) 
-                        for doc in memories.get("documents", [])
+                        for doc in st.session_state.current_memory.get("documents", [])
                     )
                     source = "📄 文档" if is_from_document else "💬 对话"
                     st.write(f"{idx}. [{source}] {p}")
             else:
                 st.caption("暂无画像列表数据")
             
-            st.divider()
-            
-            # 5. 画像信息统计
-            st.write("#### 📊 画像信息统计")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("结构化画像字段数", len([k for k, v in (structured_profile or {}).items() if v and k not in ["basic_info_history", "health_history"]]))
-            with col2:
-                st.metric("包含画像的文档数", len([d for d in (documents or []) if d.get("structured_profile")]))
-            with col3:
-                st.metric("旧格式画像数", len(profile))
+            st.write("#### 所有文档中的画像信息")
+            documents = st.session_state.current_memory.get("documents", [])
+            if documents:
+                for idx, doc in enumerate(documents, 1):
+                    st.write(f"**文档 {idx}：{doc.get('filename', '未知文件')}**")
+                    doc_structured = doc.get("structured_profile", {})
+                    doc_profile = doc.get("profile", [])
+                    if doc_structured:
+                        st.write("结构化画像：")
+                        st.json(doc_structured)
+                    if doc_profile:
+                        st.write(f"画像列表：{doc_profile}")
+                    st.write("---")
+            else:
+                st.caption("暂无文档记录")
 
         # 记忆操作
         st.divider()

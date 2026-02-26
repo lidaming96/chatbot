@@ -9,5 +9,9 @@ trubrics>=1.4.3
 streamlit-feedback
 ollama
 PyPDF2
+pymupdf
+pdfplumber
+paddleocr
+paddlepaddle
 sentence-transformers
 faiss-cpu

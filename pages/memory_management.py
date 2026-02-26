@@ -15,7 +15,8 @@ from Chatbot import (
     load_memories, save_memories, get_memory_context,
     process_uploaded_document, extract_document_facts, update_document_memory,
     extract_key_facts, update_memory_system, deduplicate_items,
-    process_uploaded_image, update_image_memory, format_profile_display
+    process_uploaded_image, update_image_memory, format_profile_display,
+    merge_structured_profile
 )
 from client import analyze_image_with_vision
 
@@ -153,25 +154,41 @@ def show_memory_management_page():
             submitted = st.form_submit_button("添加记忆")
             
             if submitted and memory_text:
-                memories = load_memories(st.session_state.current_user)
-                
-                # 根据类型添加到对应列表
-                if memory_type == "事件":
-                    memories["events"] = deduplicate_items(memories["events"], [memory_text])
-                elif memory_type == "画像":
-                    memories["profile"] = deduplicate_items(memories["profile"], [memory_text])
-                else:
-                    # 其他类型，使用AI提取
-                    conversation = f"user: {memory_text}\nassistant: 已记录"
-                    new_memory = extract_key_facts(conversation, memories["events"][-5:], memories["profile"][-5:])
-                    memories["events"] = deduplicate_items(memories["events"], new_memory['events'])
-                    memories["profile"] = deduplicate_items(memories["profile"], new_memory['profile'])
-                
-                memories["last_updated"] = datetime.now().isoformat()
-                save_memories(memories, st.session_state.current_user)
-                st.session_state.current_memory = memories
-                st.success("✅ 记忆已添加！")
-                st.rerun()
+                try:
+                    memories = load_memories(st.session_state.current_user)
+                    
+                    # 根据类型添加到对应列表
+                    if memory_type == "事件":
+                        memories["events"] = deduplicate_items(memories["events"], [memory_text])
+                    elif memory_type == "画像":
+                        memories["profile"] = deduplicate_items(memories["profile"], [memory_text])
+                    else:
+                        # 其他类型，使用AI提取
+                        conversation = f"user: {memory_text}\nassistant: 已记录"
+                        new_memory = extract_key_facts(conversation, memories["events"][-5:], memories["profile"][-5:])
+                        memories["events"] = deduplicate_items(memories["events"], new_memory['events'])
+                        memories["profile"] = deduplicate_items(memories["profile"], new_memory['profile'])
+                        
+                        # 处理结构化画像（如果提取到了）
+                        new_structured_profile = new_memory.get("structured_profile", {})
+                        if new_structured_profile:
+                            conversation_timestamp = datetime.now().isoformat()
+                            existing_structured_profile = memories.get("structured_profile", {})
+                            memories["structured_profile"] = merge_structured_profile(
+                                existing_structured_profile,
+                                new_structured_profile,
+                                timestamp=conversation_timestamp,
+                                memories=memories  # 传入memories以整合所有历史画像信息
+                            )
+                    
+                    memories["last_updated"] = datetime.now().isoformat()
+                    save_memories(memories, st.session_state.current_user)
+                    st.session_state.current_memory = memories
+                    st.success("✅ 记忆已添加！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 添加记忆失败：{str(e)}")
+                    st.exception(e)
     
     with tab2:
         st.write("### 搜索和管理记忆")
@@ -663,7 +680,49 @@ def show_memory_management_page():
     with col3:
         st.metric("文档数量", len(memories.get("documents", [])))
     
-    # 记忆摘要
+    # 人物画像（调整到前面）
+    st.write("### 人物画像")
+    
+    # 优先显示结构化画像
+    structured_profile = memories.get("structured_profile", {})
+    formatted_profile = format_profile_display(structured_profile)
+    
+    if formatted_profile:
+        # 显示格式化的结构化画像，每一点分行展示
+        # 将格式化后的文本按行分割，每行单独显示
+        profile_lines = formatted_profile.split('\n')
+        for line in profile_lines:
+            if line.strip():  # 只显示非空行
+                st.markdown(line)
+    else:
+        # 如果没有结构化画像，显示旧的列表格式
+        profile = memories.get("profile", [])
+        if profile:
+            for p in profile[-10:]:  # 显示最近10个画像
+                is_from_document = any(
+                    p in doc.get("profile", [])
+                    for doc in memories.get("documents", [])
+                )
+                icon = "📄" if is_from_document else "💬"
+                st.markdown(f"{icon} {p}")
+        else:
+            st.caption("暂无画像")
+    
+    # 近期事件
+    st.write("### 近期事件")
+    events = memories["events"]
+    if events:
+        for e in events[-10:]:  # 显示最近10个事件
+            is_from_document = any(
+                e in doc.get("events", [])
+                for doc in memories.get("documents", [])
+            )
+            icon = "📄" if is_from_document else "💬"
+            st.markdown(f"{icon} {e}")
+    else:
+        st.caption("暂无事件")
+    
+    # 记忆摘要（移到最后）
     st.write("### 记忆摘要")
     memory_summary = memories["summary"]
     
@@ -707,137 +766,15 @@ def show_memory_management_page():
         </div>
         """, unsafe_allow_html=True)
     
-    # 近期事件
-    st.write("### 近期事件")
-    events = memories["events"]
-    if events:
-        for e in events[-10:]:  # 显示最近10个事件
-            is_from_document = any(
-                e in doc.get("events", [])
-                for doc in memories.get("documents", [])
-            )
-            icon = "📄" if is_from_document else "💬"
-            st.markdown(f"{icon} {e}")
-    else:
-        st.caption("暂无事件")
-    
-    # 人物画像
-    st.write("### 人物画像")
-    
-    # 优先显示结构化画像
-    structured_profile = memories.get("structured_profile", {})
-    formatted_profile = format_profile_display(structured_profile)
-    
-    if formatted_profile:
-        # 显示格式化的结构化画像
-        st.markdown(formatted_profile)
-    else:
-        # 如果没有结构化画像，显示旧的列表格式
-        profile = memories.get("profile", [])
-        if profile:
-            for p in profile[-10:]:  # 显示最近10个画像
-                is_from_document = any(
-                    p in doc.get("profile", [])
-                    for doc in memories.get("documents", [])
-                )
-                icon = "📄" if is_from_document else "💬"
-                st.markdown(f"{icon} {p}")
-        else:
-            st.caption("暂无画像")
-    
     # 调试模块：展示所有原始画像数据
     with st.expander("🔍 调试：查看所有画像原始数据", expanded=False):
-        
-        # 1. 当前主记忆中的结构化画像（格式化展示）
-        st.write("#### 📋 当前主记忆中的结构化画像（格式化）")
-        if structured_profile:
-            formatted = format_profile_display(structured_profile)
-            if formatted:
-                st.markdown(formatted)
-            else:
-                st.caption("格式化失败")
-        else:
-            st.caption("暂无结构化画像数据")
-        
-        st.divider()
-        
-        # 2. 当前主记忆中的结构化画像（原始JSON）
-        st.write("#### 📄 当前主记忆中的结构化画像（原始JSON）")
+        st.write("#### 结构化画像 (structured_profile)")
         if structured_profile:
             st.json(structured_profile)
         else:
             st.caption("暂无结构化画像数据")
         
-        st.divider()
-        
-        # 3. 所有历史画像信息汇总（按时间排序）
-        st.write("#### 📚 所有历史画像信息汇总")
-        documents = memories.get("documents", [])
-        if documents:
-            # 筛选出有结构化画像的文档，按时间排序
-            profile_docs = []
-            for doc in documents:
-                doc_profile = doc.get("structured_profile", {})
-                if doc_profile and isinstance(doc_profile, dict):
-                    has_content = any([
-                        doc_profile.get("basic_info"),
-                        doc_profile.get("work"),
-                        doc_profile.get("education"),
-                        doc_profile.get("health"),
-                        doc_profile.get("hobbies"),
-                        doc_profile.get("preferences"),
-                        doc_profile.get("customs"),
-                        doc_profile.get("other")
-                    ])
-                    if has_content:
-                        profile_docs.append(doc)
-            
-            # 按时间戳排序，最新的在前
-            profile_docs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-            
-            if profile_docs:
-                st.write(f"**共找到 {len(profile_docs)} 个包含画像信息的文档/图片**")
-                for idx, doc in enumerate(profile_docs, 1):
-                    doc_type = doc.get("type", "document")
-                    doc_name = doc.get("filename", "未知文件")
-                    timestamp = doc.get("timestamp", "")
-                    
-                    # 格式化时间戳
-                    time_str = ""
-                    if timestamp:
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        except:
-                            time_str = timestamp[:19] if len(timestamp) >= 19 else timestamp
-                    
-                    icon = "🖼️" if doc_type == "image" else "📄"
-                    st.write(f"**{idx}. {icon} {doc_name}**" + (f" （{time_str}）" if time_str else ""))
-                    
-                    doc_structured = doc.get("structured_profile", {})
-                    if doc_structured:
-                        # 格式化展示
-                        formatted = format_profile_display(doc_structured)
-                        if formatted:
-                            st.markdown(formatted)
-                        # 原始JSON
-                        with st.expander(f"查看原始JSON", expanded=False):
-                            st.json(doc_structured)
-                    
-                    doc_profile = doc.get("profile", [])
-                    if doc_profile:
-                        st.write(f"**旧格式画像列表：** {', '.join(doc_profile)}")
-                    
-                    st.write("---")
-            else:
-                st.caption("所有文档中都没有结构化画像信息")
-        else:
-            st.caption("暂无文档记录")
-        
-        st.divider()
-        
-        # 4. 旧格式画像列表（兼容性展示）
-        st.write("#### 📝 旧格式画像列表 (profile)")
+        st.write("#### 旧格式画像列表 (profile)")
         profile = memories.get("profile", [])
         if profile:
             st.write(f"**总数：{len(profile)}**")
@@ -852,15 +789,19 @@ def show_memory_management_page():
         else:
             st.caption("暂无画像列表数据")
         
-        st.divider()
-        
-        # 5. 画像信息统计
-        st.write("#### 📊 画像信息统计")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("结构化画像字段数", len([k for k, v in (structured_profile or {}).items() if v and k not in ["basic_info_history", "health_history"]]))
-        with col2:
-            st.metric("包含画像的文档数", len([d for d in (documents or []) if d.get("structured_profile")]))
-        with col3:
-            st.metric("旧格式画像数", len(profile))
+        st.write("#### 所有文档中的画像信息")
+        documents = memories.get("documents", [])
+        if documents:
+            for idx, doc in enumerate(documents, 1):
+                st.write(f"**文档 {idx}：{doc.get('filename', '未知文件')}**")
+                doc_structured = doc.get("structured_profile", {})
+                doc_profile = doc.get("profile", [])
+                if doc_structured:
+                    st.write("结构化画像：")
+                    st.json(doc_structured)
+                if doc_profile:
+                    st.write(f"画像列表：{doc_profile}")
+                st.write("---")
+        else:
+            st.caption("暂无文档记录")
 
