@@ -13,61 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Chatbot import get_memory_context, update_memory_system
 from client import call_llm_api, stream_response
-
-# 尝试导入联网搜索工具
-try:
-    from duckduckgo_search import DDGS
-    HAS_DUCKDUCKGO = True
-except ImportError:
-    HAS_DUCKDUCKGO = False
-    DDGS = None
-
-
-def search_web(query: str, max_results: int = 5):
-    """
-    使用DuckDuckGo进行联网搜索
-    
-    Args:
-        query: 搜索查询
-        max_results: 最大返回结果数
-    
-    Returns:
-        tuple: (格式化的搜索结果字符串, 搜索结果列表)
-    """
-    if not HAS_DUCKDUCKGO:
-        return "", []
-    
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-            
-            if not results:
-                return "", []
-            
-            search_results_text = []
-            search_results_list = []
-            
-            for i, result in enumerate(results, 1):
-                title = result.get('title', '无标题')
-                body = result.get('body', '无内容')
-                href = result.get('href', '')
-                
-                search_results_text.append(
-                    f"【搜索结果 {i}】{title}\n"
-                    f"链接: {href}\n"
-                    f"内容: {body}\n"
-                )
-                
-                search_results_list.append({
-                    'title': title,
-                    'href': href,
-                    'body': body
-                })
-            
-            return "\n".join(search_results_text), search_results_list
-    except Exception as e:
-        st.warning(f"搜索时出错: {str(e)}")
-        return "", []
+from utils.web_search import HAS_DUCKDUCKGO, search_web
 
 
 def calculate_investment(principal: float, rate: float, years: int, compound_frequency: int = 1):

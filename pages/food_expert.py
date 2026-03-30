@@ -11,61 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Chatbot import get_memory_context, update_memory_system
 from client import stream_response
-
-# 尝试导入联网搜索工具
-try:
-    from duckduckgo_search import DDGS
-    HAS_DUCKDUCKGO = True
-except ImportError:
-    HAS_DUCKDUCKGO = False
-    DDGS = None
-
-
-def search_web(query: str, max_results: int = 5):
-    """
-    使用DuckDuckGo进行联网搜索
-    
-    Args:
-        query: 搜索查询
-        max_results: 最大返回结果数
-    
-    Returns:
-        tuple: (格式化的搜索结果字符串, 搜索结果列表)
-    """
-    if not HAS_DUCKDUCKGO:
-        return "", []
-    
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-            
-            if not results:
-                return "", []
-            
-            search_results_text = []
-            search_results_list = []
-            
-            for i, result in enumerate(results, 1):
-                title = result.get('title', '无标题')
-                body = result.get('body', '无内容')
-                href = result.get('href', '')
-                
-                search_results_text.append(
-                    f"【搜索结果 {i}】{title}\n"
-                    f"链接: {href}\n"
-                    f"内容: {body}\n"
-                )
-                
-                search_results_list.append({
-                    'title': title,
-                    'href': href,
-                    'body': body
-                })
-            
-            return "\n".join(search_results_text), search_results_list
-    except Exception as e:
-        st.warning(f"搜索时出错: {str(e)}")
-        return "", []
+from utils.web_search import HAS_DUCKDUCKGO, search_web
 
 
 def show_chat_page(title, system_role, messages_key):
@@ -92,18 +38,10 @@ def show_chat_page(title, system_role, messages_key):
         if HAS_DUCKDUCKGO:
             with st.spinner("正在搜索实时美食信息..."):
                 try:
-                    # 根据用户问题构建搜索查询
-                    # 默认总是执行搜索，并优化查询
                     search_query = prompt
-                    
-                    # 美食相关关键词
                     food_keywords = ["食谱", "做法", "烹饪", "美食", "菜品", "菜谱", "料理", "食材", "餐厅", "推荐"]
-                    
-                    # 如果问题中包含美食相关关键词，进一步优化搜索查询
                     if any(keyword in prompt for keyword in food_keywords):
-                        # 提取关键信息构建搜索查询
                         if "怎么做" in prompt or "如何做" in prompt or "做法" in prompt:
-                            # 提取菜品名称
                             for keyword in ["怎么做", "如何做", "做法"]:
                                 if keyword in prompt:
                                     dish_name = prompt.split(keyword)[0].strip()
@@ -115,13 +53,8 @@ def show_chat_page(title, system_role, messages_key):
                         else:
                             search_query = prompt + " 美食"
                     else:
-                        # 如果不包含明显的美食关键词，也添加"美食"来优化搜索
                         search_query = prompt + " 美食"
-                    
-                    # 执行搜索
                     search_context, search_results_list = search_web(search_query, max_results=5)
-                    
-                    # 调试信息（可选，用于排查问题）
                     if not search_context:
                         st.info(f"🔍 搜索查询: {search_query} (未找到结果)")
                     else:

@@ -16,8 +16,9 @@ from Chatbot import (
     process_uploaded_document, extract_document_facts, update_document_memory,
     extract_key_facts, update_memory_system, deduplicate_items,
     process_uploaded_image, update_image_memory, format_profile_display,
-    merge_structured_profile
+    merge_structured_profile,
 )
+from core.images import render_last_image_memory_parse, store_image_memory_parse_result
 from client import analyze_image_with_vision
 
 def show_memory_management_page():
@@ -31,7 +32,8 @@ def show_memory_management_page():
     
     with tab1:
         st.write("### 方式一：上传文档/图片")
-        
+        render_last_image_memory_parse("memory_tab_clear_last_image_parse")
+
         # 支持图片和文档上传
         uploaded_file = st.file_uploader(
             "上传文档或图片添加到记忆",
@@ -107,7 +109,10 @@ def show_memory_management_page():
                                 st.success(f"✅ 图片《{uploaded_file.name}》已成功添加到记忆中！")
                             else:
                                 st.info(f"ℹ️ 图片《{uploaded_file.name}》已保存，但识别功能需要支持多模态的API。")
-                            
+
+                            store_image_memory_parse_result(
+                                st.session_state, image_info, uploaded_file.name
+                            )
                             st.rerun()
                     else:
                         # 处理文档
